@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /teacher/
+
+Sitemap: http://127.0.0.1:8000/sitemap.xml
