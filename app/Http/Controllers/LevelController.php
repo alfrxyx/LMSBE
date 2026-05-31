@@ -24,6 +24,7 @@ class LevelController extends Controller
                 'youtube_id' => 'nullable|string',
                 'order' => 'required|integer',
                 'pdf' => 'nullable|mimes:pdf|max:10240', // Maksimal 10MB
+                'deadline' => 'nullable|date',
             ]);
 
             $course = Course::findOrFail($course_id);
@@ -62,6 +63,7 @@ class LevelController extends Controller
                 'youtube_id' => 'nullable|string',
                 'order' => 'sometimes|required|integer',
                 'pdf' => 'nullable|mimes:pdf|max:10240',
+                'deadline' => 'nullable|date',
             ]);
 
             if ($request->hasFile('pdf')) {

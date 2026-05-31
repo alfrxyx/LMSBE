@@ -16,7 +16,12 @@ class Level extends Model
         'youtube_id', 
         'xp_reward', 
         'activity_type', 
-        'order'
+        'order',
+        'deadline'
+    ];
+
+    protected $casts = [
+        'deadline' => 'datetime',
     ];
 
     // Relasi balik ke Mata Kuliah

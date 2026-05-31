@@ -7,9 +7,74 @@ use App\Models\Course;
 use App\Models\Assignment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\StudentReminderMail;
 
 class AdminController extends Controller
 {
+    /**
+     * [DOSEN] Mengambil statistik penyelesaian per materi (Level).
+     */
+    public function getMaterialStats($level_id)
+    {
+        try {
+            $level = \App\Models\Level::with('course')->findOrFail($level_id);
+            $totalStudents = User::where('role', 'student')->count();
+            
+            // Mahasiswa yang SUDAH selesai
+            $completedUsers = User::where('role', 'student')
+                ->whereHas('progress', function($q) use ($level_id) {
+                    $q->where('level_id', $level_id)->where('is_completed', true);
+                })->get();
+
+            // Mahasiswa yang BELUM selesai
+            $pendingUsers = User::where('role', 'student')
+                ->whereDoesntHave('progress', function($q) use ($level_id) {
+                    $q->where('level_id', $level_id)->where('is_completed', true);
+                })->get();
+
+            return response()->json([
+                'status' => 'success',
+                'level' => $level,
+                'stats' => [
+                    'total' => $totalStudents,
+                    'completed_count' => $completedUsers->count(),
+                    'pending_count' => $pendingUsers->count(),
+                    'percentage' => $totalStudents > 0 ? round(($completedUsers->count() / $totalStudents) * 100) : 0
+                ],
+                'completed_users' => $completedUsers,
+                'pending_users' => $pendingUsers
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Gagal memuat statistik materi', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * [DOSEN] Mengirim pengingat manual ke email mahasiswa.
+     */
+    public function remindStudent(Request $request)
+    {
+        $validated = $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'level_id' => 'required|exists:levels,id'
+        ]);
+
+        try {
+            $user = User::findOrFail($validated['user_id']);
+            $level = \App\Models\Level::with('course')->findOrFail($validated['level_id']);
+
+            Mail::to($user->email)->send(new StudentReminderMail($user, $level, 'manual'));
+
+            return response()->json([
+                'status' => 'success',
+                'message' => "Pengingat berhasil dikirim ke {$user->email}"
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Gagal mengirim email', 'error' => $e->getMessage()], 500);
+        }
+    }
+
     /**
      * Mengambil statistik ringkas untuk Dashboard Admin/Dosen.
      * Versi Pedagogis: Fokus pada keberhasilan pembelajaran.
@@ -126,6 +191,9 @@ class AdminController extends Controller
         try {
             // Gunakan Eager Loading Progres Selesai
             $students = User::where('role', 'student')
+                ->with(['progress' => function($q) {
+                    $q->where('is_completed', true);
+                }])
                 ->withCount(['progress as completed_levels_count' => function ($query) {
                     $query->where('is_completed', true);
                 }])
@@ -145,10 +213,12 @@ class AdminController extends Controller
                     'level' => $student->level,
                     'avatar' => $student->avatar,
                     'completed_count' => (int) $student->completed_levels_count,
+                    'completed_level_ids' => $student->progress->pluck('level_id'),
                     'progress_percentage' => $totalAvailableLevels > 0 
                         ? round(($student->completed_levels_count / $totalAvailableLevels) * 100) 
                         : 0,
                     'last_activity' => $student->updated_at ? $student->updated_at->diffForHumans() : 'Belum aktif',
+                    'current_streak' => $student->current_streak ?? 0,
                 ];
             });
 

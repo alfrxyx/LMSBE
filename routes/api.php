@@ -98,6 +98,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/teacher/monitoring', [AdminController::class, 'getStudentMonitoring']);
         Route::get('/teacher/export-students', [AdminController::class, 'getStudentMonitoring']); // Alias untuk export
 
+        // --- FITUR REMINDER & STATISTIK MATERI ---
+        Route::get('/teacher/levels/{level_id}/stats', [AdminController::class, 'getMaterialStats']);
+        Route::post('/teacher/remind-student', [AdminController::class, 'remindStudent']);
+
         // --- PENGUMUMAN MASAL ---
         Route::post('/announcements', [\App\Http\Controllers\AnnouncementController::class, 'store']);
         Route::delete('/announcements/{id}', [\App\Http\Controllers\AnnouncementController::class, 'destroy']);
