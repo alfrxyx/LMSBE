@@ -62,12 +62,13 @@ class User extends Authenticatable
         $lastActivity = $this->last_activity_date ? \Carbon\Carbon::parse($this->last_activity_date)->startOfDay() : null;
 
         if (!$lastActivity) {
+            // Pengguna baru pertama kali aktif
             $this->current_streak = 1;
         } else {
             $diffInDays = $today->diffInDays($lastActivity);
 
             if ($diffInDays == 1) {
-                // Login berturut-turut (Kemarin login, hari ini login)
+                // Login hari berikutnya secara berturut-turut
                 $this->current_streak += 1;
             } elseif ($diffInDays > 1) {
                 // Terputus (Terakhir login lebih dari sehari yang lalu)
@@ -76,6 +77,7 @@ class User extends Authenticatable
             // Jika diffInDays == 0 (Hari yang sama), tidak perlu update streak
         }
 
+        // Simpan tanggal aktivitas hari ini agar tidak bertambah terus di hari yang sama
         $this->last_activity_date = $today;
         $this->save();
     }

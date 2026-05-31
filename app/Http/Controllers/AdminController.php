@@ -140,15 +140,33 @@ class AdminController extends Controller
     public function indexUsers(Request $request)
     {
         $semester = $request->query('semester', 'all');
+        $totalLevels = \App\Models\Level::count();
         
-        $query = User::where('role', 'student');
+        $query = User::where('role', 'student')
+            ->withCount(['progress as completed_levels_count' => function ($query) {
+                $query->where('is_completed', true);
+            }])
+            ->withCount(['progress as youtube_submissions_count' => function ($query) {
+                $query->whereNotNull('assignment_link')
+                      ->where(function($q) {
+                          $q->where('assignment_link', 'LIKE', '%youtube.com%')
+                            ->orWhere('assignment_link', 'LIKE', '%youtu.be%');
+                      });
+            }])
+            ->with('achievements');
         
         if ($semester !== 'all') {
             $query->where('semester', $semester);
         }
 
-        $users = $query->orderBy('points', 'desc') 
-            ->get();
+        $users = $query->orderBy('points', 'desc')->get();
+
+        $users->transform(function($user) use ($totalLevels) {
+            $user->progress_percentage = $totalLevels > 0 
+                ? round(($user->completed_levels_count / $totalLevels) * 100) 
+                : 0;
+            return $user;
+        });
             
         return response()->json($users);
     }
