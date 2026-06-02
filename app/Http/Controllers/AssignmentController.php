@@ -85,8 +85,25 @@ class AssignmentController extends Controller
     }
 
     /**
+     * [DOSEN/ADMIN] Mengambil daftar pengiriman YouTube yang butuh dinilai.
+     */
+    public function getYoutubeSubmissions()
+    {
+        // Cari di user_progress yang punya assignment_link tapi belum is_completed atau butuh review
+        $pending = \App\Models\UserProgress::with(['user', 'level'])
+            ->whereNotNull('assignment_link')
+            ->where('is_completed', false)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data'   => $pending
+        ]);
+    }
+
+    /**
      * [DOSEN/ADMIN] Memberikan nilai dan feedback (Trigger Gamifikasi).
-     * Mendukung penilaian dari tabel assignments maupun user_progress.
      */
     public function grade(Request $request, $id)
     {
@@ -96,8 +113,8 @@ class AssignmentController extends Controller
         ]);
 
         return DB::transaction(function () use ($request, $id) {
-            // Coba cari di tabel user_progress dulu (Sistem YouTube Link - Paling sering digunakan)
-            $progress = \App\Models\UserProgress::with('level')->find($id);
+            // 1. Coba cari di user_progress (Sistem Link YouTube)
+            $progress = \App\Models\UserProgress::find($id);
             
             if ($progress) {
                 $progress->update([
@@ -110,44 +127,37 @@ class AssignmentController extends Controller
                 $user = User::findOrFail($progress->user_id);
                 $user->points += $request->earned_points;
                 
-                // NOTIFIKASI KE MAHASISWA
+                // NOTIFIKASI
                 \App\Models\Notification::create([
                     'user_id' => $user->id,
                     'title' => 'Tugas Telah Dinilai',
-                    'message' => 'Tugas Anda pada materi "' . ($progress->level->title ?? 'Materi') . '" telah dinilai oleh dosen.',
+                    'message' => 'Tugas Anda pada materi telah dinilai oleh dosen.',
                     'type' => 'success',
-                    'action_url' => '/courses/' . ($progress->level->course_id ?? '')
                 ]);
             } else {
-                // Jika tidak ada di user_progress, cari di tabel assignments (Sistem File Upload)
-                $assignment = Assignment::findOrFail($id);
+                // 2. Jika tidak ada, coba cari di assignments (Sistem File Upload)
+                $assignment = Assignment::find($id);
+                if (!$assignment) {
+                    return response()->json(['message' => 'Data tidak ditemukan'], 404);
+                }
+
                 $assignment->update([
                     'earned_points' => $request->earned_points,
-                    'feedback'      => $request->feedback ?? 'Gerakan sudah cukup baik.',
+                    'feedback'      => $request->feedback,
                     'status'        => 'reviewed',
                 ]);
                 
                 $user = User::findOrFail($assignment->user_id);
                 $user->points += $request->earned_points;
-
-                // NOTIFIKASI KE MAHASISWA
-                \App\Models\Notification::create([
-                    'user_id' => $user->id,
-                    'title' => 'Tugas Telah Dinilai',
-                    'message' => 'Tugas Video "' . $assignment->title . '" telah dinilai oleh dosen.',
-                    'type' => 'success',
-                    'action_url' => '/profile'
-                ]);
             }
 
-            // Logika Level Up Otomatis (Setiap 500 XP naik 1 Level)
+            // Update Level (Setiap 500 XP)
             $user->level = floor($user->points / 500) + 1;
             $user->save();
 
             return response()->json([
                 'status' => 'success',
                 'message' => 'Penilaian berhasil disimpan!',
-                'new_points' => $user->points,
                 'new_level' => $user->level
             ]);
         });
