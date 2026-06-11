@@ -19,13 +19,15 @@ use App\Http\Controllers\AssignmentController;
 // =======================================================
 // ROUTE PUBLIK (Akses Tanpa Token)
 // =======================================================
-Route::post('/login', [AuthController::class, 'login']);
-Route::post('/register', [AuthController::class, 'register']);
+Route::middleware('throttle:10,1')->group(function () {
+    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/register', [AuthController::class, 'register']);
+});
 
 // =======================================================
 // ROUTE TERPROTEKSI (Memerlukan Token Sanctum)
 // =======================================================
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
     
     Route::get('/leaderboard', [LeaderboardController::class, 'index']);
     Route::get('/courses', [CourseController::class, 'index']);
@@ -55,9 +57,10 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // Fitur Progresi Terkunci (Sequential Access)
     Route::get('/check-access/{level_id}', [ProgressController::class, 'checkAccess']);
+    Route::get('/levels/{level_id}/quiz-history', [ProgressController::class, 'getQuizHistory']);
     
     // Fitur Pengumpulan Link YouTube & Penambahan XP
-    Route::post('/levels/{id}/complete', [ProgressController::class, 'submitActivity']);
+    Route::post('/levels/{id}/complete', [ProgressController::class, 'submitActivity'])->middleware('throttle:5,1');
     
     Route::get('/my-assignments', [AssignmentController::class, 'myAssignments']);
 

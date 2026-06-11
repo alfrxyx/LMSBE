@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Level;
 use App\Models\UserProgress;
+use App\Models\UserQuizAnswer;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -121,9 +122,24 @@ class ProgressController extends Controller
                 // Jangan throw error 400, cukup set flag agar tidak tambah poin dua kali
                 $awardXP = !$alreadyCompleted;
 
-                $xpGained = $level->xp_reward;
+                $baseXP = $level->xp_reward;
+                $xpGained = $baseXP;
+                $isLate = false;
+                $penaltyAmount = 0;
+
+                // LOGIKA PENALTI: Cek Deadline
+                if ($level->deadline && now()->greaterThan($level->deadline)) {
+                    $isLate = true;
+                    $penaltyAmount = round($baseXP * 0.2); // Penalti 20%
+                    $xpGained = $baseXP - $penaltyAmount;
+                }
+
                 $assignmentLink = 'Completed via ' . $level->activity_type;
-                $extraData = [];
+                $extraData = [
+                    'is_late' => $isLate,
+                    'penalty_amount' => $penaltyAmount,
+                    'base_xp' => $baseXP
+                ];
 
                 // LOGIKA KHUSUS KUIS
                 if ($level->activity_type === 'quiz') {
@@ -138,10 +154,25 @@ class ProgressController extends Controller
                     foreach ($questions as $question) {
                         $submittedOptionId = $request->answers[$question->id] ?? null;
                         $correctOption = $question->options->where('is_correct', true)->first();
+                        $isCorrect = false;
 
                         if ($submittedOptionId && $correctOption && $submittedOptionId == $correctOption->id) {
                             $correctCount++;
+                            $isCorrect = true;
                         }
+
+                        // SIMPAN RIWAYAT JAWABAN (Point 1)
+                        UserQuizAnswer::updateOrCreate(
+                            [
+                                'user_id' => $user->id,
+                                'level_id' => $level->id,
+                                'question_id' => $question->id
+                            ],
+                            [
+                                'option_id' => $submittedOptionId,
+                                'is_correct' => $isCorrect
+                            ]
+                        );
                     }
 
                     $score = round(($correctCount / $totalQuestions) * 100);
@@ -220,5 +251,30 @@ class ProgressController extends Controller
                 return response()->json(['message' => 'Gagal menyimpan progres: ' . $e->getMessage()], 500);
             }
         });
+    }
+
+    /**
+     * 3. AMBIL RIWAYAT KUIS
+     * Mengambil jawaban mahasiswa pada pertemuan tertentu untuk di-review.
+     */
+    public function getQuizHistory($level_id)
+    {
+        $user = Auth::user();
+        $answers = UserQuizAnswer::where('user_id', $user->id)
+            ->where('level_id', $level_id)
+            ->with(['question.options'])
+            ->get();
+
+        if ($answers->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Belum ada riwayat kuis untuk pertemuan ini.'
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $answers
+        ]);
     }
 }
