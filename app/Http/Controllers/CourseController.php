@@ -100,6 +100,14 @@ class CourseController extends Controller
                 $query->orderBy('order', 'asc')->orderBy('id', 'asc')->with(['questions.options']);
             }])->findOrFail($id);
 
+            // CEK APAKAH MAHASISWA BERADA DI SEMESTER YANG SAMA DENGAN MATA KULIAH (Sinkronisasi Naskah)
+            if ($user->role === 'student' && $course->semester != $user->semester) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Anda tidak memiliki akses ke Mata Kuliah semester lain.'
+                ], 403);
+            }
+
             // CEK APAKAH COURSE SEBELUMNYA SUDAH SELESAI (Strict Course Sequence)
             if ($user->role === 'student') {
                 $previousCourse = Course::where('semester', $course->semester)

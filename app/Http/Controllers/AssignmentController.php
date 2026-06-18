@@ -35,14 +35,14 @@ class AssignmentController extends Controller
         ]);
 
         // NOTIFIKASI KE SEMUA DOSEN/ADMIN
-        $teachers = User::whereIn('role', ['dosen', 'admin'])->get();
-        foreach ($teachers as $teacher) {
+        $dosens = User::whereIn('role', ['dosen', 'admin'])->get();
+        foreach ($dosens as $dosen) {
             \App\Models\Notification::create([
-                'user_id' => $teacher->id,
+                'user_id' => $dosen->id,
                 'title' => 'Tugas Baru Masuk',
                 'message' => Auth::user()->name . ' baru saja mengirim tugas video: ' . $request->title,
                 'type' => 'info',
-                'action_url' => '/teacher/grading'
+                'action_url' => '/dosen/grading'
             ]);
         }
 

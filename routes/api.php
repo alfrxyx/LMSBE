@@ -27,7 +27,7 @@ Route::middleware('throttle:10,1')->group(function () {
 // =======================================================
 // ROUTE TERPROTEKSI (Memerlukan Token Sanctum)
 // =======================================================
-Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
+Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
     
     Route::get('/leaderboard', [LeaderboardController::class, 'index']);
     Route::get('/courses', [CourseController::class, 'index']);
@@ -72,15 +72,15 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
     // =======================================================
     // ROUTE DOSEN & ADMIN (Otoritas PJKR UM)
     // =======================================================
-    Route::middleware('isTeacherOrAdmin')->group(function () {
+    Route::middleware('isDosenOrAdmin')->group(function () {
         
         // Update Pengaturan Platform
         Route::post('/admin/settings', [\App\Http\Controllers\SettingController::class, 'update']);
 
         // Penilaian Tugas Mahasiswa
-        Route::get('/teacher/assignments/pending', [AssignmentController::class, 'getPendingAssignments']);
-        Route::get('/teacher/assignments/youtube', [AdminController::class, 'getYoutubeSubmissions']);
-        Route::post('/teacher/assignments/{id}/grade', [AssignmentController::class, 'grade']);
+        Route::get('/dosen/assignments/pending', [AssignmentController::class, 'getPendingAssignments']);
+        Route::get('/dosen/assignments/youtube', [AdminController::class, 'getYoutubeSubmissions']);
+        Route::post('/dosen/assignments/{id}/grade', [AssignmentController::class, 'grade']);
 
         // Manajemen Konten Dinamis (PDF & Video)
         Route::post('/admin/courses', [AdminController::class, 'createCourse']);
@@ -98,12 +98,12 @@ Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
 
         Route::get('/admin/stats', [AdminController::class, 'getStats']);
         Route::get('/admin/users', [AdminController::class, 'indexUsers']);
-        Route::get('/teacher/monitoring', [AdminController::class, 'getStudentMonitoring']);
-        Route::get('/teacher/export-students', [AdminController::class, 'getStudentMonitoring']); // Alias untuk export
+        Route::get('/dosen/monitoring', [AdminController::class, 'getStudentMonitoring']);
+        Route::get('/dosen/export-students', [AdminController::class, 'getStudentMonitoring']); // Alias untuk export
 
         // --- FITUR REMINDER & STATISTIK MATERI ---
-        Route::get('/teacher/levels/{level_id}/stats', [AdminController::class, 'getMaterialStats']);
-        Route::post('/teacher/remind-student', [AdminController::class, 'remindStudent']);
+        Route::get('/dosen/levels/{level_id}/stats', [AdminController::class, 'getMaterialStats']);
+        Route::post('/dosen/remind-student', [AdminController::class, 'remindStudent']);
 
         // --- PENGUMUMAN MASAL ---
         Route::post('/announcements', [\App\Http\Controllers\AnnouncementController::class, 'store']);
