@@ -183,7 +183,7 @@ class ProgressController extends Controller
                             'success' => false,
                             'message' => 'Skor Anda ' . $score . '. Minimal 70 untuk lulus.',
                             'score' => $score
-                        ], 422);
+                        ], 200);
                     }
 
                     $assignmentLink = 'Quiz Score: ' . $score . '%';

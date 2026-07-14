@@ -60,7 +60,7 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
     Route::get('/levels/{level_id}/quiz-history', [ProgressController::class, 'getQuizHistory']);
     
     // Fitur Pengumpulan Link YouTube & Penambahan XP
-    Route::post('/levels/{id}/complete', [ProgressController::class, 'submitActivity'])->middleware('throttle:5,1');
+    Route::post('/levels/{id}/complete', [ProgressController::class, 'submitActivity'])->middleware('throttle:60,1');
     
     Route::get('/my-assignments', [AssignmentController::class, 'myAssignments']);
 
