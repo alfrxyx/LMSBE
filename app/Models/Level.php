@@ -17,11 +17,13 @@ class Level extends Model
         'xp_reward', 
         'activity_type', 
         'order',
-        'deadline'
+        'deadline',
+        'rubric'
     ];
 
     protected $casts = [
         'deadline' => 'datetime',
+        'rubric' => 'array',
     ];
 
     // Relasi balik ke Mata Kuliah

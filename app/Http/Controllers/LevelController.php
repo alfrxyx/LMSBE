@@ -25,7 +25,13 @@ class LevelController extends Controller
                 'order' => 'required|integer',
                 'pdf' => 'nullable|mimes:pdf|max:10240', // Maksimal 10MB
                 'deadline' => 'nullable|date',
+                'rubric' => 'nullable|string',
             ]);
+
+            // Decode rubric JSON string to array
+            if ($request->filled('rubric')) {
+                $validated['rubric'] = json_decode($request->rubric, true);
+            }
 
             $course = Course::findOrFail($course_id);
 
@@ -64,7 +70,13 @@ class LevelController extends Controller
                 'order' => 'sometimes|required|integer',
                 'pdf' => 'nullable|mimes:pdf|max:10240',
                 'deadline' => 'nullable|date',
+                'rubric' => 'nullable|string',
             ]);
+
+            // Decode rubric JSON string to array
+            if ($request->has('rubric')) {
+                $validated['rubric'] = $request->rubric ? json_decode($request->rubric, true) : null;
+            }
 
             if ($request->hasFile('pdf')) {
                 // Hapus PDF lama jika ada
