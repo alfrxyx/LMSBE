@@ -204,11 +204,20 @@ class AdminController extends Controller
     /**
      * [DOSEN] Fitur Monitoring Mahasiswa: Melihat progres detail setiap mahasiswa.
      */
-    public function getStudentMonitoring()
+    public function getStudentMonitoring(Request $request)
     {
         try {
+            $studentsQuery = User::where('role', 'student');
+
+            // Saring berdasarkan kelas (Many-to-Many via pivot classroom_user)
+            if ($request->filled('classroom_id')) {
+                $studentsQuery->whereHas('classrooms', function($q) use ($request) {
+                    $q->where('classrooms.id', $request->classroom_id);
+                });
+            }
+
             // Gunakan Eager Loading Progres Selesai
-            $students = User::where('role', 'student')
+            $students = $studentsQuery
                 ->with(['progress' => function($q) {
                     $q->where('is_completed', true);
                 }])
@@ -230,6 +239,7 @@ class AdminController extends Controller
                     'points' => $student->points,
                     'level' => $student->level,
                     'avatar' => $student->avatar,
+                    'classroom_id' => $student->classroom_id,
                     'completed_count' => (int) $student->completed_levels_count,
                     'completed_level_ids' => $student->progress->pluck('level_id'),
                     'progress_percentage' => $totalAvailableLevels > 0 
@@ -334,5 +344,36 @@ class AdminController extends Controller
         $course = Course::findOrFail($id);
         $course->delete();
         return response()->json(['message' => 'Kursus berhasil dihapus']);
+    }
+
+    /**
+     * [DOSEN/ADMIN] Memperbarui data profil mahasiswa (termasuk Semester).
+     */
+    public function updateStudent(Request $request, $id)
+    {
+        try {
+            $user = User::findOrFail($id);
+            if ($user->role !== 'student') {
+                return response()->json(['message' => 'Hanya data mahasiswa yang dapat diubah.'], 403);
+            }
+
+            $validated = $request->validate([
+                'name' => 'sometimes|required|string|max:255',
+                'nim' => 'sometimes|required|string|unique:users,nim,' . $id,
+                'email' => 'sometimes|required|email|unique:users,email,' . $id,
+                'phone' => 'nullable|string',
+                'semester' => 'sometimes|required|integer|min:1|max:8',
+            ]);
+
+            $user->update($validated);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Data mahasiswa berhasil diperbarui!',
+                'data' => $user
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Gagal memperbarui data mahasiswa', 'error' => $e->getMessage()], 500);
+        }
     }
 }

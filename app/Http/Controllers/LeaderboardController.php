@@ -19,28 +19,28 @@ class LeaderboardController extends Controller
     {
         $user = auth()->user();
         $filter = $request->query('filter', 'all');
-        $semesterParam = $request->query('semester', 'all');
+        $classroomParam = $request->query('classroom_id', 'all');
         
-        $userSemester = $user && $user->role === 'student' ? (string) $user->semester : $semesterParam;
+        $userClassroom = $user && $user->role === 'student' ? (string) $user->classroom_id : $classroomParam;
         
-        $cacheKey = "leaderboard_{$filter}_{$userSemester}";
+        $cacheKey = "leaderboard_{$filter}_{$userClassroom}";
         
-        $topStudents = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($filter, $userSemester) {
+        $topStudents = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($filter, $userClassroom) {
             $query = User::where('role', 'student');
 
-            if ($userSemester !== 'all') {
-                $query->where('semester', $userSemester);
+            if ($userClassroom !== 'all' && $userClassroom !== '') {
+                $query->where('classroom_id', $userClassroom);
             }
             
             if ($filter === 'all') {
                 return $query->orderBy('points', 'desc')
                     ->orderBy('level', 'desc')
                     ->take(10)
-                    ->get(['id', 'name', 'points', 'level', 'avatar', 'nim', 'semester', 'bio']);
+                    ->get(['id', 'name', 'points', 'level', 'avatar', 'nim', 'semester', 'bio', 'classroom_id']);
             } else {
                 $startDate = $filter === 'weekly' ? Carbon::now()->startOfWeek() : Carbon::now()->startOfMonth();
                 
-                return $query->select('id', 'name', 'level', 'avatar', 'nim', 'semester', 'bio')
+                return $query->select('id', 'name', 'level', 'avatar', 'nim', 'semester', 'bio', 'classroom_id')
                     ->selectRaw("(
                         COALESCE((
                             SELECT SUM(l.xp_reward) 

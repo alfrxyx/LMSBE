@@ -19,23 +19,53 @@ class AuthController extends Controller
         $request->validate([
             'nim' => 'required|string|unique:users',
             'name' => 'required|string',
-            'semester' => 'required|string',
             'phone' => 'required|string',
             'email' => 'required|email|unique:users',
             'password' => 'required|min:8|confirmed',
+            'classroom_code' => 'nullable|string',
+        ], [
+            'nim.unique' => 'NIM ini sudah terdaftar di sistem. Silakan login.',
+            'email.unique' => 'Email ini sudah digunakan oleh akun lain.',
+            'nim.required' => 'NIM wajib diisi.',
+            'name.required' => 'Nama lengkap wajib diisi.',
+            'phone.required' => 'Nomor WhatsApp wajib diisi.',
+            'email.required' => 'Alamat email wajib diisi.',
+            'password.required' => 'Password wajib diisi.',
+            'password.min' => 'Password minimal harus 8 karakter.',
+            'password.confirmed' => 'Konfirmasi password tidak cocok.',
         ]);
+
+        $classroom = null;
+        if ($request->filled('classroom_code')) {
+            $code = strtoupper(trim($request->classroom_code));
+            if (strlen($code) === 4) {
+                $code = 'PJKR-' . $code;
+            }
+            $classroom = \App\Models\Classroom::where('code', $code)->first();
+
+            if (!$classroom) {
+                throw ValidationException::withMessages([
+                    'classroom_code' => ['Kode kelas tidak valid atau tidak ditemukan. Hubungi dosen Anda.'],
+                ]);
+            }
+        }
 
         $user = User::create([
             'nim' => $request->nim,
             'name' => $request->name,
-            'semester' => $request->semester,
+            'semester' => $classroom ? $classroom->semester : null,
             'phone' => $request->phone,
             'email' => $request->email,
             'password' => Hash::make($request->password),
             'role' => 'student',
             'points' => 0,
             'level' => 1,
+            'classroom_id' => $classroom ? $classroom->id : null,
         ]);
+
+        if ($classroom) {
+            $user->classrooms()->attach($classroom->id);
+        }
 
         // Berikan Achievement "Rookie" segera setelah registrasi
         $rookieAchievement = Achievement::where('name', 'Rookie')->first();
@@ -179,13 +209,13 @@ class AuthController extends Controller
             }
 
             // Memuat relasi secara opsional untuk menghindari crash jika relasi belum didefinisikan sempurna
-            $userData = $user->loadMissing(['achievements', 'progress']);
+            $userData = $user->loadMissing(['achievements', 'progress', 'classroom', 'classrooms']);
             
-            // Hitung peringkat (Rank) mahasiswa berdasarkan poin & level (Per Semester jika Mahasiswa)
+            // Hitung peringkat (Rank) mahasiswa berdasarkan poin & level (Per Kelas/Classroom jika Mahasiswa)
             $rankQuery = User::where('role', 'student');
             
-            if ($user->role === 'student') {
-                $rankQuery->where('semester', $user->semester);
+            if ($user->role === 'student' && $user->classroom_id) {
+                $rankQuery->where('classroom_id', $user->classroom_id);
             }
 
             $rank = $rankQuery->where(function($q) use ($user) {

@@ -22,6 +22,7 @@ use App\Http\Controllers\AssignmentController;
 Route::middleware('throttle:10,1')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/register', [AuthController::class, 'register']);
+    Route::get('/classrooms/verify/{code}', [\App\Http\Controllers\ClassroomController::class, 'verifyCode']);
 });
 
 // =======================================================
@@ -98,6 +99,7 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
 
         Route::get('/admin/stats', [AdminController::class, 'getStats']);
         Route::get('/admin/users', [AdminController::class, 'indexUsers']);
+        Route::put('/admin/users/{id}', [AdminController::class, 'updateStudent']);
         Route::get('/dosen/monitoring', [AdminController::class, 'getStudentMonitoring']);
         Route::get('/dosen/export-students', [AdminController::class, 'getStudentMonitoring']); // Alias untuk export
 
@@ -108,7 +110,15 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         // --- PENGUMUMAN MASAL ---
         Route::post('/announcements', [\App\Http\Controllers\AnnouncementController::class, 'store']);
         Route::delete('/announcements/{id}', [\App\Http\Controllers\AnnouncementController::class, 'destroy']);
+
+        // --- MANAJEMEN KELAS (CLASSROOMS) ---
+        Route::get('/admin/classrooms', [\App\Http\Controllers\ClassroomController::class, 'index']);
+        Route::post('/admin/classrooms', [\App\Http\Controllers\ClassroomController::class, 'store']);
+        Route::delete('/admin/classrooms/{id}', [\App\Http\Controllers\ClassroomController::class, 'destroy']);
     });
+
+    // --- MAHASISWA BERGABUNG KELAS ---
+    Route::post('/classrooms/join', [\App\Http\Controllers\ClassroomController::class, 'join']);
 
     // =======================================================
     // ROUTE NOTIFIKASI

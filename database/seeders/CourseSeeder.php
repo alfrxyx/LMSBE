@@ -13,7 +13,22 @@ class CourseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Sengaja dikosongkan agar database bersih saat dimulai ulang.
-        // Anda bisa menambahkan data awal di sini jika diperlukan di masa depan.
+        Course::create([
+            'title' => 'Metodologi Penelitian PJKR',
+            'description' => 'Mata kuliah wajib semester 6 untuk memahami dasar-dasar penelitian olahraga.',
+            'semester' => 6,
+            'total_points' => 1000,
+            'order' => 1,
+            'is_active' => true,
+        ]);
+
+        Course::create([
+            'title' => 'Evaluasi Pembelajaran PJKR',
+            'description' => 'Mata kuliah yang membahas teknik evaluasi, penilaian, dan pengukuran hasil belajar olahraga.',
+            'semester' => 6,
+            'total_points' => 1000,
+            'order' => 2,
+            'is_active' => true,
+        ]);
     }
 }

@@ -4,13 +4,25 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use App\Models\User;
+use App\Models\Classroom;
 use Illuminate\Support\Facades\Hash;
 
 class UserSeeder extends Seeder
 {
     public function run(): void
     {
-        // 1. Akun Admin
+        $course = \App\Models\Course::first();
+
+        // 1. Buat Kelas Default
+        $classroom = Classroom::create([
+            'name' => 'Offering A',
+            'code' => 'PJKR-DEF6',
+            'course_id' => $course ? $course->id : null,
+            'semester' => $course ? $course->semester : 6,
+            'is_active' => true,
+        ]);
+
+        // 2. Akun Admin
         User::create([
             'nim' => '0000000000',
             'name' => 'Admin Gamify',
@@ -19,7 +31,7 @@ class UserSeeder extends Seeder
             'role' => 'admin',
         ]);
 
-        // 2. Akun Dosen PJKR UM
+        // 3. Akun Dosen PJKR UM
         User::create([
             'nim' => '1111111111',
             'name' => 'Dosen PJKR UM',
@@ -30,8 +42,8 @@ class UserSeeder extends Seeder
             'role' => 'dosen',
         ]);
 
-        // 3. Akun Mahasiswa (Alfarabi Gazali Sati)
-        User::create([
+        // 4. Akun Mahasiswa (Alfarabi Gazali Sati)
+        $student = User::create([
             'nim' => '2106116092', 
             'name' => 'Alfarabi Gazali Sati',
             'semester' => '6',
@@ -41,6 +53,9 @@ class UserSeeder extends Seeder
             'role' => 'student',
             'points' => 250,
             'level' => 1,
+            'classroom_id' => $classroom->id,
         ]);
+
+        $student->classrooms()->attach($classroom->id);
     }
 }

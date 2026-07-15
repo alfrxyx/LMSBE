@@ -24,8 +24,9 @@ class CourseController extends Controller
                ->orderBy('order', 'asc')
                ->orderBy('id', 'asc');
 
+            $joinedCourseIds = [];
             if ($user->role === 'student') {
-                $query->where('semester', $user->semester);
+                $joinedCourseIds = $user->classrooms()->pluck('course_id')->toArray();
             }
 
             $courses = $query->get();
@@ -39,8 +40,12 @@ class CourseController extends Controller
             $previousCourseCompleted = true;
 
             // Transformasi data
-            $formattedCourses = $courses->map(function ($course) use ($allCompletedLevels, &$previousCourseCompleted, $user) {
+            $formattedCourses = $courses->map(function ($course) use ($allCompletedLevels, &$previousCourseCompleted, $user, $joinedCourseIds) {
                 $courseArray = $course->toArray();
+                
+                // Cek apakah mahasiswa terdaftar di kelas untuk matkul ini
+                $isJoined = $user->role !== 'student' || in_array($course->id, $joinedCourseIds);
+                $courseArray['is_joined'] = $isJoined;
                 
                 // Hitung apakah course ini sudah selesai (semua levelnya tuntas)
                 $totalLevels = count($courseArray['levels'] ?? []);
@@ -58,18 +63,14 @@ class CourseController extends Controller
                 
                 // Mahasiswa: Cek urutan Course
                 if ($user->role === 'student') {
-                    $courseArray['can_access'] = $previousCourseCompleted;
+                    if ($isJoined) {
+                        $courseArray['can_access'] = $previousCourseCompleted;
+                        $previousCourseCompleted = $isCourseDone;
+                    } else {
+                        $courseArray['can_access'] = false;
+                    }
                 } else {
                     $courseArray['can_access'] = true;
-                }
-
-                // Update untuk iterasi berikutnya
-                // Jika materi ini bisa diakses, maka status 'selesai' materi ini menentukan akses materi selanjutnya
-                if ($courseArray['can_access']) {
-                    $previousCourseCompleted = $isCourseDone;
-                } else {
-                    // Jika materi ini saja belum bisa diakses, maka materi selanjutnya pasti tidak bisa
-                    $previousCourseCompleted = false;
                 }
 
                 return $courseArray;
@@ -100,17 +101,22 @@ class CourseController extends Controller
                 $query->orderBy('order', 'asc')->orderBy('id', 'asc')->with(['questions.options']);
             }])->findOrFail($id);
 
-            // CEK APAKAH MAHASISWA BERADA DI SEMESTER YANG SAMA DENGAN MATA KULIAH (Sinkronisasi Naskah)
-            if ($user->role === 'student' && $course->semester != $user->semester) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Anda tidak memiliki akses ke Mata Kuliah semester lain.'
-                ], 403);
+            // CEK HAK AKSES MAHASISWA BERDASARKAN KELAS YANG DIIKUTI
+            $userCourseIds = [];
+            if ($user->role === 'student') {
+                $userCourseIds = $user->classrooms()->pluck('course_id')->toArray();
+                if (!in_array($course->id, $userCourseIds)) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Anda tidak memiliki akses ke Mata Kuliah ini. Silakan hubungi dosen Anda untuk bergabung ke kelas.'
+                    ], 403);
+                }
             }
 
             // CEK APAKAH COURSE SEBELUMNYA SUDAH SELESAI (Strict Course Sequence)
             if ($user->role === 'student') {
                 $previousCourse = Course::where('semester', $course->semester)
+                    ->whereIn('id', $userCourseIds)
                     ->where(function($q) use ($course) {
                         $q->where('order', '<', $course->order)
                           ->orWhere(function($q2) use ($course) {
@@ -128,7 +134,7 @@ class CourseController extends Controller
                         ->where('is_completed', true)
                         ->count();
 
-                    if ($totalPrevLevels === 0 || $completedPrevLevels < $totalPrevLevels) {
+                    if ($totalPrevLevels > 0 && $completedPrevLevels < $totalPrevLevels) {
                         return response()->json([
                             'status' => 'error',
                             'message' => 'Selesaikan Mata Kuliah "' . $previousCourse->title . '" terlebih dahulu.'

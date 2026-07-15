@@ -52,4 +52,12 @@ class Course extends Model
     {
         return $this->hasMany(Assignment::class);
     }
+
+    /**
+     * Relasi ke Kelas (Classrooms) yang terafiliasi dengan Mata Kuliah ini.
+     */
+    public function classrooms(): HasMany
+    {
+        return $this->hasMany(Classroom::class);
+    }
 }

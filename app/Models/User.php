@@ -31,6 +31,7 @@ class User extends Authenticatable
         'avatar',
         'current_streak',
         'last_activity_date',
+        'classroom_id',
     ];
 
     protected $hidden = [
@@ -106,5 +107,21 @@ class User extends Authenticatable
     {
         return $this->belongsToMany(Achievement::class, 'user_achievements')
                     ->withPivot('earned_at');
+    }
+
+    /**
+     * Relasi ke Kelas (Classroom) Aktif.
+     */
+    public function classroom(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Classroom::class, 'classroom_id');
+    }
+
+    /**
+     * Relasi Banyak-ke-Banyak ke seluruh Kelas yang diikuti.
+     */
+    public function classrooms(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Classroom::class, 'classroom_user');
     }
 }
