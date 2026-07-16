@@ -42,10 +42,15 @@ class ProgressController extends Controller
         // Cari level sebelumnya dalam sequence
         $previousLevel = $levels[$currentIndex - 1];
 
-        // Cek progres level sebelumnya
+        // Cek progres level sebelumnya (boleh lanjut jika sudah dinilai ATAU jika tipe tugas & link sudah dikirim)
         $isPrevCompleted = UserProgress::where('user_id', $user->id)
                                     ->where('level_id', $previousLevel->id)
-                                    ->where('is_completed', true)
+                                    ->where(function($q) use ($previousLevel) {
+                                        $q->where('is_completed', true);
+                                        if ($previousLevel->activity_type === 'assignment') {
+                                            $q->orWhereNotNull('assignment_link');
+                                        }
+                                    })
                                     ->exists();
 
         if (!$isPrevCompleted) {
@@ -86,7 +91,12 @@ class ProgressController extends Controller
             
             $isPrevCompleted = UserProgress::where('user_id', $user->id)
                                         ->where('level_id', $previousLevel->id)
-                                        ->where('is_completed', true)
+                                        ->where(function($q) use ($previousLevel) {
+                                            $q->where('is_completed', true);
+                                            if ($previousLevel->activity_type === 'assignment') {
+                                                $q->orWhereNotNull('assignment_link');
+                                            }
+                                        })
                                         ->exists();
             
             if (!$isPrevCompleted) {
@@ -191,16 +201,19 @@ class ProgressController extends Controller
                     $assignmentLink = $request->assignment_link;
                 }
 
-                // Simpan progres mahasiswa
+                // Simpan progres mahasiswa (tugas praktik di-set false agar dosen yang melakukan penilaian)
+                $isCompleted = ($level->activity_type !== 'assignment');
+
                 UserProgress::updateOrCreate(
                     ['user_id' => $user->id, 'level_id' => $level->id],
                     [
                         'assignment_link' => $assignmentLink,
-                        'is_completed' => true
+                        'is_completed' => $isCompleted
                     ]
                 );
 
-                if ($awardXP) {
+                // Tambahkan XP instan hanya jika levelnya bukan tugas praktik (karena tugas praktik dinilai manual oleh dosen)
+                if ($awardXP && $isCompleted) {
                     // Tambahkan XP ke profil mahasiswa
                     $user->points += $xpGained;
                     $user->level = floor($user->points / 500) + 1;

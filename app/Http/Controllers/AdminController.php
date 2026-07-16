@@ -79,43 +79,88 @@ class AdminController extends Controller
      * Mengambil statistik ringkas untuk Dashboard Admin/Dosen.
      * Versi Pedagogis: Fokus pada keberhasilan pembelajaran.
      */
-    public function getStats()
+    public function getStats(Request $request)
     {
-        $totalStudents = User::where('role', 'student')->count();
+        $classroomId = $request->query('classroom_id', 'all');
+        $semester = $request->query('semester', 'all');
+
+        // Query dasar mahasiswa terfilter
+        $studentsQuery = User::where('role', 'student');
+        if ($classroomId !== 'all') {
+            $studentsQuery->whereHas('classrooms', function($q) use ($classroomId) {
+                $q->where('classrooms.id', $classroomId);
+            });
+        }
+        if ($semester !== 'all') {
+            $studentsQuery->where('semester', $semester);
+        }
+
+        $studentIds = $studentsQuery->pluck('id');
+        $totalStudents = $studentsQuery->count();
         $totalLevels = \App\Models\Level::count();
         
         // 1. Rata-rata Progres Kelas
-        $totalProgressCount = \App\Models\UserProgress::where('is_completed', true)->count();
+        $totalProgressCount = \App\Models\UserProgress::whereIn('user_id', $studentIds)
+            ->where('is_completed', true)
+            ->count();
         $avgProgress = ($totalStudents > 0 && $totalLevels > 0) 
             ? round(($totalProgressCount / ($totalStudents * $totalLevels)) * 100) 
             : 0;
 
-        // 2. Materi Paling Sulit (Berdasarkan jumlah mahasiswa yang menyelesaikan)
-        $difficultLevels = \App\Models\Level::withCount(['questions', 'progress as completions' => function($q) {
-                $q->where('is_completed', true);
+        // 2. Materi Paling Sulit (Filter berdasarkan mahasiswa terpilih)
+        $difficultLevels = \App\Models\Level::withCount(['questions', 'progress as completions' => function($q) use ($studentIds) {
+                $q->where('is_completed', true)->whereIn('user_id', $studentIds);
             }])
             ->orderBy('completions', 'asc')
             ->take(3)
             ->get();
 
-        // 3. Mahasiswa "At-Risk" (Kurang aktif - belum menyelesaikan progres apapun)
+        // 3. Mahasiswa "At-Risk"
         $atRiskStudents = User::where('role', 'student')
+            ->whereIn('id', $studentIds)
             ->whereDoesntHave('progress', function($q) {
                 $q->where('is_completed', true);
             })
             ->count();
 
+        // 4. Rasio Kelengkapan Tugas Praktikum (Filter berdasarkan mahasiswa terpilih)
+        $gradedCount = \App\Models\UserProgress::whereIn('user_id', $studentIds)
+            ->whereHas('level', function($q) {
+                $q->where('activity_type', 'assignment');
+            })
+            ->where('is_completed', true)
+            ->count();
+
+        $pendingCount = \App\Models\UserProgress::whereIn('user_id', $studentIds)
+            ->whereHas('level', function($q) {
+                $q->where('activity_type', 'assignment');
+            })
+            ->where('is_completed', false)
+            ->whereNotNull('assignment_link')
+            ->count();
+
+        $totalAssignmentLevels = \App\Models\Level::where('activity_type', 'assignment')->count();
+        $totalExpectedSubmissions = $totalStudents * $totalAssignmentLevels;
+        $notSubmittedCount = max(0, $totalExpectedSubmissions - ($gradedCount + $pendingCount));
+
+        $assignmentStats = [
+            ['name' => 'Selesai & Dinilai', 'value' => $gradedCount],
+            ['name' => 'Menunggu Penilaian', 'value' => $pendingCount],
+            ['name' => 'Belum Mengumpulkan', 'value' => $notSubmittedCount]
+        ];
+
         return response()->json([
             'total_students' => $totalStudents,
             'total_courses' => Course::count(),
             'pending_assignments' => Assignment::where('status', 'pending')->count(),
-            'total_points_distributed' => User::sum('points'),
+            'total_points_distributed' => User::whereIn('id', $studentIds)->sum('points'),
             'pedagogical_stats' => [
                 'avg_class_progress' => $avgProgress,
                 'at_risk_count' => $atRiskStudents,
                 'difficult_materials' => $difficultLevels->map(function($l) {
                     return ['title' => $l->title, 'completions' => $l->completions];
                 }),
+                'assignment_stats' => $assignmentStats,
             ]
         ]);
     }
@@ -178,18 +223,27 @@ class AdminController extends Controller
     public function getYoutubeSubmissions(Request $request)
     {
         $semester = $request->query('semester', 'all');
+        $classroomId = $request->query('classroom_id', 'all');
 
         $query = \App\Models\UserProgress::with(['user', 'level.course'])
             ->whereHas('level', function($q) {
                 $q->where('activity_type', 'assignment');
             })
             ->whereNotNull('assignment_link')
-            ->where('assignment_link', 'LIKE', '%youtube.com%')
-            ->orWhere('assignment_link', 'LIKE', '%youtu.be%');
+            ->where(function($q) {
+                $q->where('assignment_link', 'LIKE', '%youtube.com%')
+                  ->orWhere('assignment_link', 'LIKE', '%youtu.be%');
+            });
 
         if ($semester !== 'all') {
             $query->whereHas('level.course', function($q) use ($semester) {
                 $q->where('semester', $semester);
+            });
+        }
+
+        if ($classroomId !== 'all') {
+            $query->whereHas('user.classrooms', function($q) use ($classroomId) {
+                $q->where('classrooms.id', $classroomId);
             });
         }
 
