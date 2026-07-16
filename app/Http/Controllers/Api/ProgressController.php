@@ -22,6 +22,14 @@ class ProgressController extends Controller
         $user = Auth::user();
         $level = Level::findOrFail($level_id);
 
+        // Cek Jadwal Akses Pembukaan (open_at)
+        if ($level->open_at && now()->lessThan($level->open_at)) {
+            return response()->json([
+                'can_access' => false,
+                'message' => 'Materi ini belum dibuka. Baru dapat diakses pada ' . $level->open_at->format('d M Y H:i') . ' WIB.'
+            ], 403);
+        }
+
         // Cari urutan level secara keseluruhan
         $levels = Level::where('course_id', $level->course_id)
                        ->orderBy('order', 'asc')
@@ -74,6 +82,36 @@ class ProgressController extends Controller
     {
         $user = Auth::user();
         $level = Level::findOrFail($level_id);
+
+        // Cek Jadwal Akses Pembukaan (open_at)
+        if ($level->open_at && now()->lessThan($level->open_at)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Materi ini belum dibuka. Baru dapat diakses pada ' . $level->open_at->format('d M Y H:i') . ' WIB.'
+            ], 403);
+        }
+
+        // Cek Batas Akhir Akses (Untuk Kuis yang ditutup ketat)
+        if ($level->activity_type === 'quiz' && $level->deadline && now()->greaterThan($level->deadline)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kuis ini telah ditutup pada ' . $level->deadline->format('d M Y H:i') . ' WIB.'
+            ], 403);
+        }
+
+        // Cek Batasan Waktu Durasi Kuis (Duration Limit)
+        if ($level->activity_type === 'quiz' && $level->duration_minutes) {
+            $progress = UserProgress::where('user_id', $user->id)->where('level_id', $level->id)->first();
+            if ($progress) {
+                $maxDurationSeconds = ($level->duration_minutes * 60) + 60; // 60 detik toleransi network delay
+                if (now()->diffInSeconds($progress->created_at) > $maxDurationSeconds) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Waktu pengerjaan kuis Anda telah habis (melebihi batas ' . $level->duration_minutes . ' menit).'
+                    ], 403);
+                }
+            }
+        }
 
         // LOGIKA ROADMAP: CEK URUTAN SEBELUM SUBMIT (Strict Completion)
         // Cari semua level di course ini, urutkan, dan temukan posisi level saat ini
@@ -133,22 +171,17 @@ class ProgressController extends Controller
                 $awardXP = !$alreadyCompleted;
 
                 $baseXP = $level->xp_reward;
-                $xpGained = $baseXP;
                 $isLate = false;
                 $penaltyAmount = 0;
 
                 // LOGIKA PENALTI: Cek Deadline
                 if ($level->deadline && now()->greaterThan($level->deadline)) {
                     $isLate = true;
-                    $penaltyAmount = round($baseXP * 0.2); // Penalti 20%
-                    $xpGained = $baseXP - $penaltyAmount;
                 }
 
                 $assignmentLink = 'Completed via ' . $level->activity_type;
                 $extraData = [
-                    'is_late' => $isLate,
-                    'penalty_amount' => $penaltyAmount,
-                    'base_xp' => $baseXP
+                    'is_late' => $isLate
                 ];
 
                 // LOGIKA KHUSUS KUIS
@@ -188,17 +221,30 @@ class ProgressController extends Controller
                     $score = round(($correctCount / $totalQuestions) * 100);
                     $extraData['score'] = $score;
 
-                    if ($score < 70) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Skor Anda ' . $score . '. Minimal 70 untuk lulus.',
-                            'score' => $score
-                        ], 200);
+                    // XP dinamis berdasarkan persentase skor kuis
+                    $xpGained = (int) round(($score / 100) * $baseXP);
+
+                    if ($isLate) {
+                        $penaltyAmount = (int) round($xpGained * 0.2); // Penalti 20%
+                        $xpGained = $xpGained - $penaltyAmount;
                     }
 
+                    $extraData['penalty_amount'] = $penaltyAmount;
+                    $extraData['base_xp'] = $xpGained + $penaltyAmount;
+
                     $assignmentLink = 'Quiz Score: ' . $score . '%';
-                } elseif ($level->activity_type === 'assignment') {
-                    $assignmentLink = $request->assignment_link;
+                } else {
+                    $xpGained = $baseXP;
+                    if ($isLate) {
+                        $penaltyAmount = (int) round($baseXP * 0.2);
+                        $xpGained = $baseXP - $penaltyAmount;
+                    }
+                    $extraData['penalty_amount'] = $penaltyAmount;
+                    $extraData['base_xp'] = $baseXP;
+
+                    if ($level->activity_type === 'assignment') {
+                        $assignmentLink = $request->assignment_link;
+                    }
                 }
 
                 // Simpan progres mahasiswa (tugas praktik di-set false agar dosen yang melakukan penilaian)
@@ -288,6 +334,76 @@ class ProgressController extends Controller
         return response()->json([
             'success' => true,
             'data' => $answers
+        ]);
+    }
+
+    /**
+     * 4. INISIALISASI MULAI KUIS (MEREKAM WAKTU MULAI & HITUNG SISA DETIK)
+     */
+    public function startQuiz($level_id)
+    {
+        $user = Auth::user();
+        $level = Level::findOrFail($level_id);
+
+        if ($level->activity_type !== 'quiz') {
+            return response()->json(['message' => 'Level ini bukan tipe kuis'], 400);
+        }
+
+        // Cek Jadwal Buka
+        if ($level->open_at && now()->lessThan($level->open_at)) {
+            return response()->json([
+                'message' => 'Kuis ini belum dibuka. Baru dapat diakses pada ' . $level->open_at->format('d M Y H:i') . ' WIB.'
+            ], 403);
+        }
+
+        // Cek Jadwal Tutup
+        if ($level->deadline && now()->greaterThan($level->deadline)) {
+            return response()->json([
+                'message' => 'Kuis ini telah ditutup pada ' . $level->deadline->format('d M Y H:i') . ' WIB.'
+            ], 403);
+        }
+
+        // Cari progress
+        $progress = UserProgress::where('user_id', $user->id)
+            ->where('level_id', $level->id)
+            ->first();
+
+        // Jika kuis sudah selesai dikerjakan, larang akses mulai kembali
+        if ($progress && $progress->is_completed) {
+            return response()->json([
+                'message' => 'Anda sudah mengerjakan kuis ini dan tidak dapat mengulangnya kembali.'
+            ], 403);
+        }
+
+        if (!$progress) {
+            $progress = UserProgress::create([
+                'user_id' => $user->id,
+                'level_id' => $level->id,
+                'is_completed' => false
+            ]);
+        }
+
+        // Hitung sisa waktu pengerjaan (dalam detik)
+        $durationSeconds = $level->duration_minutes ? ((int) $level->duration_minutes * 60) : null;
+        $elapsedSeconds = (int) now()->diffInSeconds($progress->created_at);
+        
+        $remainingSeconds = $durationSeconds ? max(0, $durationSeconds - $elapsedSeconds) : null;
+
+        // Jika kuis ditutup serentak, cek sisa waktu sampai deadline
+        if ($level->deadline) {
+            $secondsToDeadline = (int) now()->diffInSeconds($level->deadline, false);
+            if ($secondsToDeadline < 0) {
+                $remainingSeconds = 0;
+            } elseif ($remainingSeconds === null || $secondsToDeadline < $remainingSeconds) {
+                $remainingSeconds = max(0, $secondsToDeadline);
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'start_time' => $progress->created_at,
+            'duration_minutes' => $level->duration_minutes,
+            'remaining_seconds' => $remainingSeconds !== null ? (int) $remainingSeconds : null
         ]);
     }
 }

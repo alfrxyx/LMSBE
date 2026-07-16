@@ -25,6 +25,8 @@ class LevelController extends Controller
                 'order' => 'required|integer',
                 'pdf' => 'nullable|mimes:pdf|max:10240', // Maksimal 10MB
                 'deadline' => 'nullable|date',
+                'open_at' => 'nullable|date',
+                'duration_minutes' => 'nullable|integer|min:1',
                 'rubric' => 'nullable|string',
             ]);
 
@@ -70,6 +72,8 @@ class LevelController extends Controller
                 'order' => 'sometimes|required|integer',
                 'pdf' => 'nullable|mimes:pdf|max:10240',
                 'deadline' => 'nullable|date',
+                'open_at' => 'nullable|date',
+                'duration_minutes' => 'nullable|integer|min:1',
                 'rubric' => 'nullable|string',
             ]);
 

@@ -59,6 +59,7 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
     // Fitur Progresi Terkunci (Sequential Access)
     Route::get('/check-access/{level_id}', [ProgressController::class, 'checkAccess']);
     Route::get('/levels/{level_id}/quiz-history', [ProgressController::class, 'getQuizHistory']);
+    Route::post('/levels/{id}/start-quiz', [ProgressController::class, 'startQuiz']);
     
     // Fitur Pengumpulan Link YouTube & Penambahan XP
     Route::post('/levels/{id}/complete', [ProgressController::class, 'submitActivity'])->middleware('throttle:60,1');

@@ -18,11 +18,14 @@ class Level extends Model
         'activity_type', 
         'order',
         'deadline',
+        'open_at',
+        'duration_minutes',
         'rubric'
     ];
 
     protected $casts = [
         'deadline' => 'datetime',
+        'open_at' => 'datetime',
         'rubric' => 'array',
     ];
 
