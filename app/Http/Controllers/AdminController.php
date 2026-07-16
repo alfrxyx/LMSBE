@@ -153,7 +153,7 @@ class AdminController extends Controller
                             ->orWhere('assignment_link', 'LIKE', '%youtu.be%');
                       });
             }])
-            ->with('achievements');
+            ->with(['achievements', 'classrooms.course', 'progress.level.course']);
         
         if ($semester !== 'all') {
             $query->where('semester', $semester);
