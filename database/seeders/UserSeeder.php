@@ -25,7 +25,7 @@ class UserSeeder extends Seeder
         // 2. Akun Admin
         User::create([
             'nim' => '0000000000',
-            'name' => 'Admin Gamify',
+            'name' => 'Admin PJKRLEARN',
             'email' => 'admin@mail.com',
             'password' => Hash::make('password'),
             'role' => 'admin',
