@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\LeaderboardController; 
 use App\Http\Controllers\CourseController; 
@@ -22,6 +23,8 @@ use App\Http\Controllers\AssignmentController;
 Route::middleware('throttle:10,1')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/register', [AuthController::class, 'register']);
+    Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLinkEmail']);
+    Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
     Route::get('/classrooms/verify/{code}', [\App\Http\Controllers\ClassroomController::class, 'verifyCode']);
 });
 
