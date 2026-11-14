@@ -524,9 +524,15 @@ class AdminController extends Controller
                 'semester' => 'required|string',
                 'total_points' => 'nullable|integer',
                 'order' => 'sometimes|integer',
-                'thumbnail' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+                'thumbnail' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:10240',
                 'thumbnail_url' => 'nullable|string',
                 'offering_name' => 'nullable|string|max:255',
+            ], [
+                'title.required' => 'Judul mata kuliah wajib diisi.',
+                'description.required' => 'Deskripsi mata kuliah wajib diisi.',
+                'semester.required' => 'Target semester wajib dipilih.',
+                'thumbnail.image' => 'File thumbnail harus berupa gambar.',
+                'thumbnail.max' => 'Ukuran foto thumbnail maksimal 10MB.',
             ]);
 
             $thumbnailPath = 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=800';
@@ -571,8 +577,15 @@ class AdminController extends Controller
             }]);
 
             return response()->json(['message' => 'Kursus dan Kelas Offering berhasil ditambahkan!', 'data' => $course], 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $firstError = collect($e->errors())->flatten()->first();
+            return response()->json([
+                'message' => $firstError,
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal menyimpan materi', 'error' => $e->getMessage()], 500);
+            \Log::error('CreateCourse error: ' . $e->getMessage());
+            return response()->json(['message' => 'Gagal menyimpan materi: ' . $e->getMessage()], 500);
         }
     }
 
@@ -589,8 +602,13 @@ class AdminController extends Controller
                 'semester' => 'sometimes|required|string',
                 'total_points' => 'nullable|integer',
                 'order' => 'sometimes|integer',
-                'thumbnail' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+                'thumbnail' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:10240',
                 'thumbnail_url' => 'nullable|string',
+            ], [
+                'title.required' => 'Judul mata kuliah wajib diisi.',
+                'description.required' => 'Deskripsi mata kuliah wajib diisi.',
+                'thumbnail.image' => 'File thumbnail harus berupa gambar.',
+                'thumbnail.max' => 'Ukuran foto thumbnail maksimal 10MB.',
             ]);
 
             $data = $validated;
