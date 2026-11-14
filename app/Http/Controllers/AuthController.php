@@ -81,7 +81,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Login menggunakan NIM Mahasiswa
+     * Login menggunakan NIM Mahasiswa, NIP Dosen, atau Email
      */
     public function login(Request $request)
     {
@@ -90,11 +90,16 @@ class AuthController extends Controller
             'password' => 'required',
         ]);
 
-        $user = User::where('nim', $request->nim)->first();
+        $loginInput = trim($request->nim);
+
+        // Cari pengguna berdasarkan NIM/NIP ataupun Email secara fleksibel
+        $user = User::where('nim', $loginInput)
+            ->orWhere('email', $loginInput)
+            ->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
             throw ValidationException::withMessages([
-                'nim' => ['NIM atau Password yang Anda masukkan salah.'],
+                'nim' => ['NIM / ID / Email atau kata sandi yang Anda masukkan salah.'],
             ]);
         }
 
