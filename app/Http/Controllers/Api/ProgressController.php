@@ -13,6 +13,9 @@ use Illuminate\Support\Facades\Log;
 
 class ProgressController extends Controller
 {
+    /** Nilai minimum kuis agar dianggap lulus & mendapat XP. */
+    private const QUIZ_PASS_SCORE = 70;
+
     /**
      * 1. FITUR CEK AKSES (SEQUENTIAL ACCESS)
      * Mahasiswa hanya bisa buka pertemuan jika pertemuan sebelumnya sudah 'is_completed'.
@@ -99,17 +102,49 @@ class ProgressController extends Controller
             ], 403);
         }
 
-        // Cek Batasan Waktu Durasi Kuis (Duration Limit)
-        if ($level->activity_type === 'quiz' && $level->duration_minutes) {
-            $progress = UserProgress::where('user_id', $user->id)->where('level_id', $level->id)->first();
-            if ($progress) {
+        // VALIDASI SESI KUIS: kuis wajib dimulai lewat startQuiz agar jam server berjalan
+        if ($level->activity_type === 'quiz') {
+            $quizSession = UserProgress::where('user_id', $user->id)->where('level_id', $level->id)->first();
+
+            if (!$quizSession) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Kuis belum dimulai. Tekan tombol "Mulai Kerjakan Kuis" terlebih dahulu.'
+                ], 403);
+            }
+
+            if ($quizSession->is_completed) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Anda sudah lulus kuis ini dan tidak dapat mengirim jawaban kembali.'
+                ], 403);
+            }
+
+            // Cek Batasan Waktu Durasi Kuis (Duration Limit)
+            if ($level->duration_minutes) {
                 $maxDurationSeconds = ($level->duration_minutes * 60) + 60; // 60 detik toleransi network delay
-                if (now()->diffInSeconds($progress->created_at) > $maxDurationSeconds) {
+                if (now()->diffInSeconds($quizSession->created_at) > $maxDurationSeconds) {
+                    // Sesi kedaluwarsa dibuang agar mahasiswa bisa memulai percobaan baru
+                    $quizSession->delete();
                     return response()->json([
                         'success' => false,
-                        'message' => 'Waktu pengerjaan kuis Anda telah habis (melebihi batas ' . $level->duration_minutes . ' menit).'
+                        'message' => 'Waktu pengerjaan kuis Anda telah habis (melebihi batas ' . $level->duration_minutes . ' menit). Silakan mulai ulang kuis.'
                     ], 403);
                 }
+            }
+        }
+
+        // PROTEKSI XP GANDA: tugas yang sudah disetujui dosen tidak boleh dikirim ulang
+        if ($level->activity_type === 'assignment') {
+            $approved = UserProgress::where('user_id', $user->id)
+                ->where('level_id', $level->id)
+                ->where('is_completed', true)
+                ->exists();
+            if ($approved) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tugas ini sudah dinilai dan disetujui dosen, tidak dapat dikirim ulang.'
+                ], 403);
             }
         }
 
@@ -161,16 +196,14 @@ class ProgressController extends Controller
         // Gunakan Transaction agar data XP dan Progres tetap sinkron
         return DB::transaction(function () use ($user, $level, $request) {
             try {
-                // CEK APAKAH SUDAH PERNAH DISELESAIKAN (Cegah Spam XP)
-                $alreadyCompleted = UserProgress::where('user_id', $user->id)
+                // CEK PROGRES SEBELUMNYA (Cegah Spam XP, namun izinkan kenaikan selisih XP saat Retake Kuis)
+                $existingProgress = UserProgress::where('user_id', $user->id)
                                                 ->where('level_id', $level->id)
-                                                ->where('is_completed', true)
-                                                ->exists();
-                
-                // Jangan throw error 400, cukup set flag agar tidak tambah poin dua kali
-                $awardXP = !$alreadyCompleted;
+                                                ->first();
+                $alreadyCompleted = $existingProgress && $existingProgress->is_completed;
+                $previousEarnedPoints = $alreadyCompleted ? (int) ($existingProgress->earned_points ?? 0) : 0;
 
-                $baseXP = $level->xp_reward;
+                $baseXP = (int) $level->xp_reward;
                 $isLate = false;
                 $penaltyAmount = 0;
 
@@ -183,6 +216,7 @@ class ProgressController extends Controller
                 $extraData = [
                     'is_late' => $isLate
                 ];
+                $score = null;
 
                 // LOGIKA KHUSUS KUIS
                 if ($level->activity_type === 'quiz') {
@@ -218,15 +252,32 @@ class ProgressController extends Controller
                         );
                     }
 
-                    $score = round(($correctCount / $totalQuestions) * 100);
+                    $score = (int) round(($correctCount / $totalQuestions) * 100);
                     $extraData['score'] = $score;
+
+                    // AMBANG KELULUSAN: di bawah nilai minimum tidak mendapat XP dan kuis belum dianggap selesai
+                    if ($score < self::QUIZ_PASS_SCORE) {
+                        // Buang sesi percobaan ini agar percobaan berikutnya mendapat jam baru
+                        UserProgress::where('user_id', $user->id)
+                            ->where('level_id', $level->id)
+                            ->where('is_completed', false)
+                            ->delete();
+
+                        return response()->json([
+                            'success' => false,
+                            'is_completed' => false,
+                            'score' => $score,
+                            'passing_score' => self::QUIZ_PASS_SCORE,
+                            'message' => "Skor Anda {$score}. Nilai minimal kelulusan adalah " . self::QUIZ_PASS_SCORE . ". Pelajari kembali materinya lalu coba lagi."
+                        ]);
+                    }
 
                     // XP dinamis berdasarkan persentase skor kuis
                     $xpGained = (int) round(($score / 100) * $baseXP);
 
                     if ($isLate) {
                         $penaltyAmount = (int) round($xpGained * 0.2); // Penalti 20%
-                        $xpGained = $xpGained - $penaltyAmount;
+                        $xpGained = max(0, $xpGained - $penaltyAmount);
                     }
 
                     $extraData['penalty_amount'] = $penaltyAmount;
@@ -237,7 +288,7 @@ class ProgressController extends Controller
                     $xpGained = $baseXP;
                     if ($isLate) {
                         $penaltyAmount = (int) round($baseXP * 0.2);
-                        $xpGained = $baseXP - $penaltyAmount;
+                        $xpGained = max(0, $baseXP - $penaltyAmount);
                     }
                     $extraData['penalty_amount'] = $penaltyAmount;
                     $extraData['base_xp'] = $baseXP;
@@ -250,57 +301,80 @@ class ProgressController extends Controller
                 // Simpan progres mahasiswa (tugas praktik di-set false agar dosen yang melakukan penilaian)
                 $isCompleted = ($level->activity_type !== 'assignment');
 
-                UserProgress::updateOrCreate(
-                    ['user_id' => $user->id, 'level_id' => $level->id],
-                    [
-                        'assignment_link' => $assignmentLink,
-                        'is_completed' => $isCompleted
-                    ]
-                );
-
-                // Tambahkan XP instan hanya jika levelnya bukan tugas praktik (karena tugas praktik dinilai manual oleh dosen)
-                if ($awardXP && $isCompleted) {
-                    // Tambahkan XP ke profil mahasiswa
-                    $user->points += $xpGained;
-                    $user->level = floor($user->points / 500) + 1;
-                    $user->save();
-
-                    // CEK ACHIEVEMENT: Nilai Sempurna
-                    if ($level->activity_type === 'quiz' && isset($score) && $score === 100) {
-                        $perfectAchievement = \App\Models\Achievement::where('name', 'Nilai Sempurna')->first();
-                        if ($perfectAchievement && !$user->achievements()->where('achievement_id', $perfectAchievement->id)->exists()) {
-                            $user->achievements()->attach($perfectAchievement->id, ['earned_at' => now()]);
-                        }
-                    }
-
-                    // PEMBERIAN LENCANA BERDASARKAN POIN (Legacy Logic)
-                    $availableAchievements = \App\Models\Achievement::where('required_points', '>', 0)
-                        ->where('required_points', '<=', $user->points)
-                        ->get();
-                    foreach ($availableAchievements as $achievement) {
-                        $alreadyHas = DB::table('user_achievements')
-                            ->where('user_id', $user->id)
-                            ->where('achievement_id', $achievement->id)
-                            ->exists();
-                        
-                        if (!$alreadyHas) {
-                            $user->achievements()->attach($achievement->id, ['earned_at' => now()]);
-                        }
-                    }
-
-                    // CEK ACHIEVEMENT: Kolektor Lencana (Mendapatkan 7 lencana)
-                    if ($user->achievements()->count() >= 7) {
-                        $collectorAchievement = \App\Models\Achievement::where('name', 'Kolektor Lencana')->first();
-                        if ($collectorAchievement && !$user->achievements()->where('achievement_id', $collectorAchievement->id)->exists()) {
-                            $user->achievements()->attach($collectorAchievement->id, ['earned_at' => now()]);
-                        }
+                // Hitung selisih XP yang berhak diterima mahasiswa (mendukung peningkatan skor saat Retake Kuis)
+                $xpToAdd = 0;
+                if ($isCompleted) {
+                    if (!$alreadyCompleted) {
+                        $xpToAdd = $xpGained;
+                    } elseif ($xpGained > $previousEarnedPoints) {
+                        $xpToAdd = $xpGained - $previousEarnedPoints;
                     }
                 }
 
+                $finalEarnedPoints = $isCompleted ? max($previousEarnedPoints, $xpGained) : 0;
+
+                $updatePayload = [
+                    'assignment_link' => $assignmentLink,
+                    'is_completed' => $isCompleted,
+                    'earned_points' => $finalEarnedPoints,
+                    'completed_at' => $isCompleted ? now() : null,
+                ];
+
+                // Jika mahasiswa mengirim/mengirim ulang link tugas video, bersihkan catatan revisi lama & beri notifikasi ke dosen
+                if ($level->activity_type === 'assignment') {
+                    $updatePayload['feedback'] = null;
+
+                    // Beri tahu hanya dosen pengampu mata kuliah ini (fallback: semua dosen/admin jika pengampu belum diatur)
+                    $instructorId = $level->course->instructor_id ?? null;
+                    $dosens = $instructorId
+                        ? \App\Models\User::where('id', $instructorId)->get()
+                        : \App\Models\User::whereIn('role', ['dosen', 'admin'])->get();
+                    foreach ($dosens as $dosen) {
+                        \App\Models\Notification::create([
+                            'user_id' => $dosen->id,
+                            'title' => 'Pengumpulan Tugas Video',
+                            'message' => $user->name . ' telah mengirimkan tautan video untuk materi "' . $level->title . '".',
+                            'type' => 'info',
+                            'action_url' => '/dosen/grading',
+                        ]);
+                    }
+                }
+
+                UserProgress::updateOrCreate(
+                    ['user_id' => $user->id, 'level_id' => $level->id],
+                    $updatePayload
+                );
+
+                // Tambahkan XP ke profil mahasiswa jika ada tambahan poin
+                if ($xpToAdd > 0) {
+                    $user->points += $xpToAdd;
+                    $user->level = (int) floor($user->points / 500) + 1;
+                    $user->save();
+                }
+
+                // Evaluasi seluruh kriteria lencana (termasuk Aktivitas Terpuji, Nilai Sempurna, Ranking 1, & Kolektor Lencana)
+                $unlockedBadges = $user->evaluateAchievements([
+                    'quiz_score' => $score,
+                ]);
+                $extraData['unlocked_badges'] = $unlockedBadges;
+
+                // Bersihkan cache leaderboard untuk semua kelas yang diikuti mahasiswa
+                \App\Http\Controllers\LeaderboardController::clearCache($user->classroom_id);
+                foreach ($user->classrooms()->pluck('classrooms.id') as $clsId) {
+                    \App\Http\Controllers\LeaderboardController::clearCache($clsId);
+                }
+
+                $responseMessage = ($level->activity_type === 'assignment')
+                    ? 'Tautan tugas berhasil dikirim! Menunggu verifikasi dan penilaian dosen.'
+                    : ($xpToAdd > 0 ? 'Selamat! Anda mendapatkan +' . $xpToAdd . ' XP' : 'Progres berhasil diperbarui.');
+
                 return response()->json(array_merge([
                     'success' => true,
-                    'message' => $awardXP ? 'Selamat! Anda mendapatkan +' . $xpGained . ' XP' : 'Progres berhasil diperbarui.',
-                    'xp_gained' => $awardXP ? $xpGained : 0,
+                    'is_completed' => $isCompleted,
+                    'has_submitted' => true,
+                    'assignment_link' => $assignmentLink,
+                    'message' => $responseMessage,
+                    'xp_gained' => $xpToAdd,
                     'new_xp' => $user->points,
                     'new_level' => $user->level
                 ], $extraData));
@@ -373,6 +447,13 @@ class ProgressController extends Controller
             return response()->json([
                 'message' => 'Anda sudah mengerjakan kuis ini dan tidak dapat mengulangnya kembali.'
             ], 403);
+        }
+
+        // Sesi lama yang sudah kedaluwarsa dibuang agar mahasiswa mendapat percobaan baru dengan jam baru
+        if ($progress && $level->duration_minutes
+            && now()->diffInSeconds($progress->created_at) > ((int) $level->duration_minutes * 60) + 60) {
+            $progress->delete();
+            $progress = null;
         }
 
         if (!$progress) {

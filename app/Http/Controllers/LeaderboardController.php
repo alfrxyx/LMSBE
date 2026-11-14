@@ -19,36 +19,55 @@ class LeaderboardController extends Controller
     {
         $user = auth()->user();
         $filter = $request->query('filter', 'all');
-        $classroomParam = $request->query('classroom_id', 'all');
+        $classroomParam = $request->query('classroom_id', '');
         
-        $userClassroom = $user && $user->role === 'student' ? (string) $user->classroom_id : $classroomParam;
+        // Jika parameter kosong dan user adalah mahasiswa, default ke semester mahasiswa (atau kelasnya)
+        if ($classroomParam === '' || $classroomParam === null) {
+            if ($user && $user->role === 'student') {
+                $userClassroom = $user->semester ? 'sem_' . $user->semester : ($user->classroom_id ? (string) $user->classroom_id : 'all');
+            } else {
+                $userClassroom = 'all';
+            }
+        } elseif ($classroomParam === 'semester' && $user) {
+            $userClassroom = $user->semester ? 'sem_' . $user->semester : 'all';
+        } else {
+            $userClassroom = (string) $classroomParam;
+        }
         
         $cacheKey = "leaderboard_{$filter}_{$userClassroom}";
         
-        $topStudents = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($filter, $userClassroom) {
+        $topStudents = Cache::remember($cacheKey, now()->addMinutes(3), function () use ($filter, $userClassroom) {
             $query = User::where('role', 'student');
 
-            if ($userClassroom !== 'all' && $userClassroom !== '') {
-                $query->where('classroom_id', $userClassroom);
+            if (str_starts_with($userClassroom, 'sem_')) {
+                $sem = str_replace('sem_', '', $userClassroom);
+                $query->where('semester', $sem);
+            } elseif ($userClassroom !== 'all' && !empty($userClassroom)) {
+                $query->where(function ($q) use ($userClassroom) {
+                    $q->where('classroom_id', $userClassroom)
+                      ->orWhereHas('classrooms', function ($cq) use ($userClassroom) {
+                          $cq->where('classrooms.id', $userClassroom);
+                      });
+                });
             }
             
             if ($filter === 'all') {
-                return $query->orderBy('points', 'desc')
+                $students = $query->orderBy('points', 'desc')
                     ->orderBy('level', 'desc')
-                    ->take(10)
+                    ->take(50)
                     ->get(['id', 'name', 'points', 'level', 'avatar', 'nim', 'semester', 'bio', 'classroom_id']);
             } else {
                 $startDate = $filter === 'weekly' ? Carbon::now()->startOfWeek() : Carbon::now()->startOfMonth();
                 
-                return $query->select('id', 'name', 'level', 'avatar', 'nim', 'semester', 'bio', 'classroom_id')
+                $students = $query->select('id', 'name', 'level', 'avatar', 'nim', 'semester', 'bio', 'classroom_id')
                     ->selectRaw("(
                         COALESCE((
-                            SELECT SUM(l.xp_reward) 
+                            SELECT SUM(COALESCE(NULLIF(up.earned_points, 0), l.xp_reward)) 
                             FROM user_progress up 
                             JOIN levels l ON up.level_id = l.id 
                             WHERE up.user_id = users.id 
                               AND up.is_completed = 1 
-                              AND up.updated_at >= ?
+                              AND COALESCE(up.completed_at, up.updated_at) >= ?
                         ), 0)
                         +
                         COALESCE((
@@ -61,14 +80,39 @@ class LeaderboardController extends Controller
                     ) as points", [$startDate, $startDate])
                     ->orderBy('points', 'desc')
                     ->orderBy('level', 'desc')
-                    ->take(10)
+                    ->take(50)
                     ->get();
             }
+
+            // Pastikan casting tipe integer konsisten agar di frontend selalu berupa number
+            return $students->map(function ($student) {
+                $student->points = (int) $student->points;
+                $student->level = (int) $student->level;
+                return $student;
+            });
         });
 
         return response()->json([
             'status' => 'success',
             'data' => $topStudents
         ]);
+    }
+
+    /**
+     * Helper statis untuk membersihkan cache leaderboard secara instan.
+     */
+    public static function clearCache($classroomId = null)
+    {
+        $filters = ['all', 'weekly', 'monthly'];
+        foreach ($filters as $f) {
+            Cache::forget("leaderboard_{$f}_all");
+            Cache::forget("leaderboard_{$f}_");
+            for ($s = 1; $s <= 8; $s++) {
+                Cache::forget("leaderboard_{$f}_sem_{$s}");
+            }
+            if ($classroomId) {
+                Cache::forget("leaderboard_{$f}_{$classroomId}");
+            }
+        }
     }
 }

@@ -45,6 +45,11 @@ class LevelController extends Controller
 
             $level = $course->levels()->create($validated);
 
+            // Sinkronisasi otomatis total_points mata kuliah berdasarkan jumlah xp_reward seluruh pertemuan
+            $course->update([
+                'total_points' => (int) $course->levels()->sum('xp_reward')
+            ]);
+
             return response()->json([
                 'message' => 'Pertemuan berhasil ditambahkan!',
                 'data' => $level
@@ -93,6 +98,12 @@ class LevelController extends Controller
 
             $level->update($validated);
 
+            if ($level->course) {
+                $level->course->update([
+                    'total_points' => (int) $level->course->levels()->sum('xp_reward')
+                ]);
+            }
+
             return response()->json(['message' => 'Pertemuan berhasil diperbarui!', 'data' => $level]);
 
         } catch (\Exception $e) {
@@ -107,10 +118,18 @@ class LevelController extends Controller
     {
         try {
             $level = Level::findOrFail($id);
+            $course = $level->course;
             if ($level->pdf_path) {
                 Storage::disk('public')->delete($level->pdf_path);
             }
             $level->delete();
+
+            if ($course) {
+                $course->update([
+                    'total_points' => (int) $course->levels()->sum('xp_reward')
+                ]);
+            }
+
             return response()->json(['message' => 'Pertemuan berhasil dihapus']);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Gagal menghapus pertemuan'], 500);

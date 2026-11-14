@@ -94,20 +94,64 @@ class ClassroomController extends Controller
         }
 
         $user = Auth::user();
+        $promotedMessage = null;
 
-        // [GUARDRAIL PILIHAN 1] Mencegah mahasiswa bergabung ke kelas di atas semester akademiknya
-        if ($user->role === 'student' && $user->semester && $classroom->semester > $user->semester) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Anda tidak dapat bergabung ke kelas Semester ' . $classroom->semester . ' karena semester akademik Anda saat ini adalah Semester ' . $user->semester . '. Hubungi dosen Anda jika ada kesalahan tingkat semester.'
-            ], 403);
+        // [SMART GAMIFIED PROGRESSION: Opsi A + B]
+        // Jika mahasiswa memasukkan token kelas di semester yang lebih tinggi dari semester aktifnya:
+        if ($user->role === 'student' && $user->semester && (int)$classroom->semester > (int)$user->semester) {
+            $currentSem = (int) $user->semester;
+            $targetSem = (int) $classroom->semester;
+
+            // Cegah loncat lebih dari 1 semester sekaligus (misal dari Sem 2 langsung ke Sem 7)
+            if ($targetSem > $currentSem + 1) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => "Kenaikan semester harus berurutan. Anda saat ini di Semester {$currentSem}, silakan selesaikan Semester " . ($currentSem + 1) . " terlebih dahulu atau hubungi Dosen Anda."
+                ], 403);
+            }
+
+            // Cek apakah seluruh pertemuan pada kelas yang diikuti di semester aktif sudah tuntas 100%
+            $currentSemClassrooms = $user->classrooms()
+                ->where('semester', (string) $currentSem)
+                ->with('course.levels')
+                ->get();
+
+            $requiredLevelIds = $currentSemClassrooms
+                ->pluck('course')
+                ->filter()
+                ->flatMap(function ($course) {
+                    return $course->levels ? $course->levels->pluck('id') : [];
+                })
+                ->unique()
+                ->values()
+                ->toArray();
+
+            $totalRequired = count($requiredLevelIds);
+            $completedRequired = $totalRequired > 0
+                ? \App\Models\UserProgress::where('user_id', $user->id)
+                    ->whereIn('level_id', $requiredLevelIds)
+                    ->where('is_completed', true)
+                    ->count()
+                : 0;
+
+            if ($totalRequired === 0 || $completedRequired < $totalRequired) {
+                $pct = $totalRequired > 0 ? round(($completedRequired / $totalRequired) * 100) : 0;
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $totalRequired === 0
+                        ? "Anda belum menyelesaikan kelas apa pun di Semester {$currentSem}. Tuntaskan perkuliahan Semester {$currentSem} terlebih dahulu atau hubungi Dosen untuk menaikkan semester Anda."
+                        : "Belum dapat naik ke Semester {$targetSem}. Selesaikan 100% materi & tugas pada kelas Semester {$currentSem} Anda terlebih dahulu (Progres saat ini: {$completedRequired}/{$totalRequired} pertemuan • {$pct}%)."
+                ], 403);
+            }
+
+            $promotedMessage = "Selamat! Seluruh materi Semester {$currentSem} telah tuntas 100%. Anda otomatis naik ke Semester {$targetSem} dan bergabung ke kelas {$classroom->name}!";
         }
 
         $user->classroom_id = $classroom->id;
         
         // Hanya update semester jika kelas baru berada di semester yang lebih tinggi 
         // (mencegah penurunan semester saat mengambil kelas mengulang di bawahnya)
-        if (!$user->semester || $classroom->semester > $user->semester) {
+        if (!$user->semester || (int)$classroom->semester > (int)$user->semester) {
             $user->semester = $classroom->semester;
         }
         
@@ -117,7 +161,7 @@ class ClassroomController extends Controller
         $user->classrooms()->syncWithoutDetaching([$classroom->id]);
 
         // Load ulang data user dengan relasi
-        $user->loadMissing(['achievements', 'progress', 'classroom', 'classrooms']);
+        $user->loadMissing(['achievements', 'progress', 'classroom', 'classrooms.course']);
 
         // Format data respons menyerupai profil terotentikasi
         $rankQuery = User::where('role', 'student')->where('classroom_id', $classroom->id);
@@ -143,7 +187,7 @@ class ClassroomController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'message' => 'Berhasil bergabung ke kelas ' . $classroom->name . '!',
+            'message' => $promotedMessage ?? ('Berhasil bergabung ke kelas ' . $classroom->name . '!'),
             'user' => $userData
         ]);
     }

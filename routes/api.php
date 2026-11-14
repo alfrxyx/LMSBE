@@ -99,10 +99,15 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         Route::delete('/questions/{id}', [\App\Http\Controllers\QuizController::class, 'destroy']);
 
         Route::get('/admin/stats', [AdminController::class, 'getStats']);
+        Route::get('/admin/analytics', [AdminController::class, 'getAnalytics']);
         Route::get('/admin/users', [AdminController::class, 'indexUsers']);
+        Route::post('/admin/users', [AdminController::class, 'storeStudent']);
+        Route::post('/admin/users/promote-semester', [AdminController::class, 'promoteSemesterBulk']);
         Route::put('/admin/users/{id}', [AdminController::class, 'updateStudent']);
+        Route::delete('/admin/users/{id}', [AdminController::class, 'deleteStudent']);
         Route::get('/dosen/monitoring', [AdminController::class, 'getStudentMonitoring']);
         Route::get('/dosen/export-students', [AdminController::class, 'getStudentMonitoring']); // Alias untuk export
+        Route::get('/admin/export-research-dataset', [AdminController::class, 'exportResearchDataset']); // Dataset SPSS/Skripsi
 
         // --- FITUR REMINDER & STATISTIK MATERI ---
         Route::get('/dosen/levels/{level_id}/stats', [AdminController::class, 'getMaterialStats']);

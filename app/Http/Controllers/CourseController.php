@@ -17,9 +17,14 @@ class CourseController extends Controller
             $user = auth()->user();
             
             // Urutkan Course berdasarkan semester dan order
-            $query = Course::with(['levels' => function($query) {
-                $query->orderBy('order', 'asc')->orderBy('id', 'asc');
-            }])->where('is_active', true)
+            $query = Course::with([
+                'levels' => function($query) {
+                    $query->orderBy('order', 'asc')->orderBy('id', 'asc');
+                },
+                'classrooms' => function($query) {
+                    $query->withCount('students')->orderBy('id', 'asc');
+                }
+            ])->where('is_active', true)
                ->orderBy('semester', 'asc')
                ->orderBy('order', 'asc')
                ->orderBy('id', 'asc');
@@ -114,15 +119,23 @@ class CourseController extends Controller
             }
 
             // CEK APAKAH COURSE SEBELUMNYA SUDAH SELESAI (Strict Course Sequence)
+            // Aturan SAMA dengan index(): rantai berurutan lintas semester (semester -> order -> id)
             if ($user->role === 'student') {
-                $previousCourse = Course::where('semester', $course->semester)
+                $previousCourse = Course::where('is_active', true)
                     ->whereIn('id', $userCourseIds)
                     ->where(function($q) use ($course) {
-                        $q->where('order', '<', $course->order)
-                          ->orWhere(function($q2) use ($course) {
-                              $q2->where('order', $course->order)->where('id', '<', $course->id);
+                        $q->where('semester', '<', $course->semester)
+                          ->orWhere(function($q1) use ($course) {
+                              $q1->where('semester', $course->semester)
+                                 ->where(function($q2) use ($course) {
+                                     $q2->where('order', '<', $course->order)
+                                        ->orWhere(function($q3) use ($course) {
+                                            $q3->where('order', $course->order)->where('id', '<', $course->id);
+                                        });
+                                 });
                           });
                     })
+                    ->orderBy('semester', 'desc')
                     ->orderBy('order', 'desc')
                     ->orderBy('id', 'desc')
                     ->first();
@@ -156,10 +169,26 @@ class CourseController extends Controller
                 foreach ($courseArray['levels'] as $key => $level) {
                     $progress = $userProgress->get($level['id']);
                     $isDone = $progress ? $progress->is_completed : false;
+                    $hasSubmitted = ($level['activity_type'] === 'assignment' && $progress && !empty($progress->assignment_link));
                     
                     $courseArray['levels'][$key]['is_completed'] = $isDone;
+                    $courseArray['levels'][$key]['has_submitted'] = $hasSubmitted;
+                    $courseArray['levels'][$key]['assignment_link'] = $progress ? $progress->assignment_link : null;
                     $courseArray['levels'][$key]['feedback'] = $progress ? $progress->feedback : null;
                     $courseArray['levels'][$key]['earned_points'] = $progress ? $progress->earned_points : 0;
+
+                    // Sembunyikan kunci jawaban kuis (is_correct) & acak urutan pilihan (anti-cheat) untuk mahasiswa
+                    if ($user->role === 'student' && !$isDone && !empty($courseArray['levels'][$key]['questions'])) {
+                        foreach ($courseArray['levels'][$key]['questions'] as $qIndex => $question) {
+                            if (!empty($question['options'])) {
+                                // Acak opsi jawaban agar tidak bisa saling sontek posisi A/B/C/D
+                                shuffle($courseArray['levels'][$key]['questions'][$qIndex]['options']);
+                                foreach ($courseArray['levels'][$key]['questions'][$qIndex]['options'] as $oIndex => $option) {
+                                    unset($courseArray['levels'][$key]['questions'][$qIndex]['options'][$oIndex]['is_correct']);
+                                }
+                            }
+                        }
+                    }
                     
                     // Level pertama (berdasarkan urutan sort tadi) selalu terbuka
                     if ($key === 0) {
@@ -168,8 +197,21 @@ class CourseController extends Controller
                         $courseArray['levels'][$key]['can_access'] = $previousLevelCompleted;
                     }
                     
-                    // Siapkan status untuk level berikutnya (sequential access)
-                    $previousLevelCompleted = $isDone;
+                    // JADWAL BUKA: sembunyikan isi pertemuan dari mahasiswa sebelum waktu open_at tiba
+                    $levelModel = $course->levels[$key] ?? null;
+                    $opensInFuture = $levelModel && $levelModel->open_at && now()->lessThan($levelModel->open_at);
+                    $courseArray['levels'][$key]['opens_in_future'] = false;
+                    if ($user->role === 'student' && $opensInFuture) {
+                        $courseArray['levels'][$key]['opens_in_future'] = true;
+                        $courseArray['levels'][$key]['can_access'] = false;
+                        $courseArray['levels'][$key]['description'] = '';
+                        $courseArray['levels'][$key]['pdf_path'] = null;
+                        $courseArray['levels'][$key]['youtube_id'] = null;
+                        $courseArray['levels'][$key]['questions'] = [];
+                    }
+
+                    // Siapkan status untuk level berikutnya (boleh lanjut jika sudah dinilai ATAU jika tipe tugas & link sudah dikirim)
+                    $previousLevelCompleted = ($isDone || $hasSubmitted);
                 }
             }
 

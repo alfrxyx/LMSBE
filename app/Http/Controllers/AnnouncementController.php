@@ -32,7 +32,10 @@ class AnnouncementController extends Controller
         $request->validate([
             'title' => 'required|string|max:255',
             'message' => 'required|string',
-            'type' => 'required|in:info,warning,success'
+            'type' => 'required|in:info,warning,success',
+            'course_id' => 'nullable|integer',
+            'classroom_id' => 'nullable|integer',
+            'semester' => 'nullable',
         ]);
 
         $announcement = Announcement::create([
@@ -42,16 +45,44 @@ class AnnouncementController extends Controller
             'type' => $request->type
         ]);
 
-        // NOTIFIKASI KE SEMUA MAHASISWA
-        $students = \App\Models\User::where('role', 'student')->get();
+        // Filter penerima notifikasi agar tidak spam ke seluruh mahasiswa se-kampus
+        $studentsQuery = \App\Models\User::where('role', 'student');
+
+        if ($request->filled('classroom_id')) {
+            $studentsQuery->whereHas('classrooms', function ($q) use ($request) {
+                $q->where('classrooms.id', $request->classroom_id);
+            });
+        } elseif ($request->filled('course_id')) {
+            $studentsQuery->whereHas('classrooms', function ($q) use ($request) {
+                $q->where('course_id', $request->course_id);
+            });
+        } elseif ($request->filled('semester')) {
+            $studentsQuery->where('semester', $request->semester);
+        }
+
+        $students = $studentsQuery->get();
+        $now = now();
+        $actionUrl = $request->filled('course_id') ? '/courses/' . $request->course_id : '/dashboard';
+        $notifData = [];
+
         foreach ($students as $student) {
-            \App\Models\Notification::create([
+            $notifData[] = [
                 'user_id' => $student->id,
-                'title' => 'Pengumuman Baru: ' . $request->title,
-                'message' => 'Dosen telah memposting pengumuman baru. Silakan cek dashboard Anda.',
+                'title' => 'Pengumuman: ' . $request->title,
+                'message' => $request->message,
                 'type' => $request->type,
-                'action_url' => '/dashboard'
-            ]);
+                'action_url' => $actionUrl,
+                'is_read' => false,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        // Bulk insert efisien tanpa memblokir server
+        if (!empty($notifData)) {
+            foreach (array_chunk($notifData, 100) as $chunk) {
+                \App\Models\Notification::insert($chunk);
+            }
         }
 
         return response()->json([

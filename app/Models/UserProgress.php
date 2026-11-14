@@ -26,6 +26,7 @@ class UserProgress extends Model
         'is_completed',
         'completed_at',
         'feedback',
+        'rubric_scores',
         'earned_points',
     ];
 
@@ -37,6 +38,7 @@ class UserProgress extends Model
         'is_completed' => 'boolean',
         'completed_at' => 'datetime',
         'earned_points' => 'integer',
+        'rubric_scores' => 'array',
     ];
 
     /**

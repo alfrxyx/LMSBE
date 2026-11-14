@@ -26,7 +26,7 @@ class AuditLogMiddleware
                 DB::table('activity_logs')->insert([
                     'user_id' => Auth::id(),
                     'action' => $action,
-                    'payload' => json_encode($request->except(['password', 'password_confirmation', 'avatar'])),
+                    'payload' => json_encode($request->except(['password', 'password_confirmation', 'current_password', 'avatar'])),
                     'ip_address' => $request->ip(),
                     'user_agent' => $request->userAgent(),
                     'created_at' => now(),

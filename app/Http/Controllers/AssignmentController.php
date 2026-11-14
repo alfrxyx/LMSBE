@@ -103,37 +103,76 @@ class AssignmentController extends Controller
     }
 
     /**
-     * [DOSEN/ADMIN] Memberikan nilai dan feedback (Trigger Gamifikasi).
+     * [DOSEN/ADMIN] Memberikan nilai dan feedback atau meminta revisi (Trigger Gamifikasi).
      */
     public function grade(Request $request, $id)
     {
         $request->validate([
             'earned_points' => 'required|integer|min:0',
             'feedback'      => 'nullable|string',
+            'rubric_scores' => 'nullable|array',
+            'status'        => 'nullable|in:approved,revision',
         ]);
 
-        return DB::transaction(function () use ($request, $id) {
+        $isRevision = $request->input('status') === 'revision';
+        $rubricScores = $request->input('rubric_scores');
+        $rawFeedback = $request->input('feedback');
+
+        // Ekstraksi nilai rubrik ke kolom JSON khusus jika ada format RUBRIC_DATA
+        if (empty($rubricScores) && $rawFeedback && str_contains($rawFeedback, 'RUBRIC_DATA:')) {
+            try {
+                $parts = explode('|FEEDBACK:', $rawFeedback);
+                $jsonStr = str_replace('RUBRIC_DATA:', '', $parts[0]);
+                $rubricScores = json_decode($jsonStr, true);
+            } catch (\Throwable $e) {}
+        }
+
+        return DB::transaction(function () use ($request, $id, $isRevision, $rubricScores) {
             // 1. Coba cari di user_progress (Sistem Link YouTube)
             $progress = \App\Models\UserProgress::find($id);
             
             if ($progress) {
-                $progress->update([
-                    'is_completed' => true,
-                    'feedback' => $request->feedback,
-                    'earned_points' => $request->earned_points,
-                    'completed_at' => now(),
-                ]);
-                
+                $oldPoints = $progress->is_completed ? (int) ($progress->earned_points ?? 0) : 0;
                 $user = User::findOrFail($progress->user_id);
-                $user->points += $request->earned_points;
-                
-                // NOTIFIKASI
-                \App\Models\Notification::create([
-                    'user_id' => $user->id,
-                    'title' => 'Tugas Telah Dinilai',
-                    'message' => 'Tugas Anda pada materi telah dinilai oleh dosen.',
-                    'type' => 'success',
-                ]);
+
+                if ($isRevision) {
+                    $progress->update([
+                        'is_completed'  => false,
+                        'feedback'      => $request->feedback,
+                        'rubric_scores' => $rubricScores,
+                        'earned_points' => 0,
+                        'completed_at'  => null,
+                    ]);
+
+                    $user->points = max(0, $user->points - $oldPoints);
+
+                    \App\Models\Notification::create([
+                        'user_id'    => $user->id,
+                        'title'      => 'Tugas Video Perlu Revisi',
+                        'message'    => 'Dosen meminta revisi pada tugas video Anda. Silakan baca catatan evaluasi dan kirim ulang tautan video perbaikan.',
+                        'type'       => 'warning',
+                        'action_url' => $progress->level ? '/courses/' . $progress->level->course_id : '/courses',
+                    ]);
+                } else {
+                    $progress->update([
+                        'is_completed'  => true,
+                        'feedback'      => $request->feedback,
+                        'rubric_scores' => $rubricScores,
+                        'earned_points' => $request->earned_points,
+                        'completed_at'  => now(),
+                    ]);
+                    
+                    $user->points = max(0, $user->points + ($request->earned_points - $oldPoints));
+                    
+                    // NOTIFIKASI
+                    \App\Models\Notification::create([
+                        'user_id'    => $user->id,
+                        'title'      => $oldPoints > 0 ? 'Nilai Tugas Diperbarui' : 'Tugas Telah Dinilai',
+                        'message'    => 'Tugas video praktik Anda telah dinilai oleh dosen (Poin: +' . $request->earned_points . ' XP).',
+                        'type'       => 'success',
+                        'action_url' => $progress->level ? '/courses/' . $progress->level->course_id : '/courses',
+                    ]);
+                }
             } else {
                 // 2. Jika tidak ada, coba cari di assignments (Sistem File Upload)
                 $assignment = Assignment::find($id);
@@ -141,24 +180,57 @@ class AssignmentController extends Controller
                     return response()->json(['message' => 'Data tidak ditemukan'], 404);
                 }
 
-                $assignment->update([
-                    'earned_points' => $request->earned_points,
-                    'feedback'      => $request->feedback,
-                    'status'        => 'reviewed',
-                ]);
-                
+                $oldPoints = ($assignment->status === 'reviewed') ? (int) ($assignment->earned_points ?? 0) : 0;
                 $user = User::findOrFail($assignment->user_id);
-                $user->points += $request->earned_points;
+
+                if ($isRevision) {
+                    $assignment->update([
+                        'earned_points' => 0,
+                        'feedback'      => $request->feedback,
+                        'status'        => 'pending',
+                    ]);
+                    $user->points = max(0, $user->points - $oldPoints);
+                } else {
+                    $assignment->update([
+                        'earned_points' => $request->earned_points,
+                        'feedback'      => $request->feedback,
+                        'status'        => 'reviewed',
+                    ]);
+                    $user->points = max(0, $user->points + ($request->earned_points - $oldPoints));
+                }
             }
 
             // Update Level (Setiap 500 XP)
-            $user->level = floor($user->points / 500) + 1;
+            $user->level = (int) floor($user->points / 500) + 1;
             $user->save();
 
+            // Evaluasi otomatis seluruh Kriteria Lencana (Achievements/Badges) saat tugas lulus dinilai
+            $unlockedBadges = [];
+            if (!$isRevision) {
+                $unlockedBadges = $user->evaluateAchievements();
+
+                if (!empty($unlockedBadges)) {
+                    \App\Models\Notification::create([
+                        'user_id'    => $user->id,
+                        'title'      => 'Lencana Baru Terbuka!',
+                        'message'    => 'Selamat! Anda berhasil membuka lencana: ' . implode(', ', $unlockedBadges),
+                        'type'       => 'success',
+                        'action_url' => '/achievements',
+                    ]);
+                }
+            }
+
+            // Bersihkan cache leaderboard agar peringkat langsung ter-update secara real-time di semua kelas
+            \App\Http\Controllers\LeaderboardController::clearCache($user->classroom_id);
+            foreach ($user->classrooms()->pluck('classrooms.id') as $clsId) {
+                \App\Http\Controllers\LeaderboardController::clearCache($clsId);
+            }
+
             return response()->json([
-                'status' => 'success',
-                'message' => 'Penilaian berhasil disimpan!',
-                'new_level' => $user->level
+                'status'          => 'success',
+                'message'         => $isRevision ? 'Catatan revisi berhasil dikirim ke mahasiswa!' : 'Penilaian berhasil disimpan!',
+                'new_level'       => $user->level,
+                'unlocked_badges' => $unlockedBadges,
             ]);
         });
     }

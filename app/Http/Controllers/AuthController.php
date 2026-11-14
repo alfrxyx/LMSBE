@@ -197,9 +197,6 @@ class AuthController extends Controller
     private function formatUserData($user)
     {
         try {
-            // Update Streak saat akses profil (Sudah dipanggil di atas, tapi pastikan konsisten)
-            $user->updateStreak();
-
             // CEK ACHIEVEMENT: Konsistensi Tinggi (7 Day Streak)
             if ($user->current_streak >= 7) {
                 $streakAchievement = Achievement::where('name', 'Konsistensi Tinggi')->first();
@@ -209,7 +206,7 @@ class AuthController extends Controller
             }
 
             // Memuat relasi secara opsional untuk menghindari crash jika relasi belum didefinisikan sempurna
-            $userData = $user->loadMissing(['achievements', 'progress', 'classroom', 'classrooms']);
+            $userData = $user->loadMissing(['achievements', 'progress', 'classroom', 'classrooms.course']);
             
             // Hitung peringkat (Rank) mahasiswa berdasarkan poin & level (Per Kelas/Classroom jika Mahasiswa)
             $rankQuery = User::where('role', 'student');
@@ -231,6 +228,7 @@ class AuthController extends Controller
                 $rankAchievement = Achievement::where('name', 'Ranking 1 Leaderboard')->first();
                 if ($rankAchievement && !$user->achievements()->where('achievement_id', $rankAchievement->id)->exists()) {
                     $user->achievements()->attach($rankAchievement->id, ['earned_at' => now()]);
+                    $user->load('achievements');
                 }
             }
 
@@ -239,6 +237,7 @@ class AuthController extends Controller
                 $collectorAchievement = Achievement::where('name', 'Kolektor Lencana')->first();
                 if ($collectorAchievement && !$user->achievements()->where('achievement_id', $collectorAchievement->id)->exists()) {
                     $user->achievements()->attach($collectorAchievement->id, ['earned_at' => now()]);
+                    $user->load('achievements');
                 }
             }
 

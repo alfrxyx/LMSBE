@@ -22,6 +22,7 @@ class Course extends Model
         'total_points', // Total XP yang bisa didapat
         'order',        // Urutan antar Mata Kuliah
         'is_active',    // Status aktif/non-aktif
+        'instructor_id', // Dosen pengampu (penerima notifikasi tugas)
     ];
 
     /**
