@@ -24,10 +24,13 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Grup middleware untuk API
         $middleware->group('api', [
-            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
             'throttle:300,1',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
             \App\Http\Middleware\AuditLogMiddleware::class,
+        ]);
+
+        $middleware->validateCsrfTokens(except: [
+            'api/*',
         ]);
     })
 
